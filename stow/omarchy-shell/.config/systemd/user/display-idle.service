@@ -1,0 +1,14 @@
+[Unit]
+Description=Turn off idle displays independently of Caffeinate
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+ExecStart=/usr/bin/quickshell -n -p %h/.config/omarchy/display-idle
+Restart=on-failure
+RestartSec=3
+ExecStopPost=-/usr/bin/hyprctl dispatch "hl.dsp.dpms({action=\"on\"})"
+
+[Install]
+WantedBy=graphical-session.target
