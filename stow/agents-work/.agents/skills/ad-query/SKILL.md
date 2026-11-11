@@ -26,15 +26,14 @@ Pass multi-line scripts on stdin with a quoted heredoc (`<<'PS'`) so bash does n
 
 ## Output format
 
-Unless the user specifies a different format, or authentication fails (see Errors), the final answer is **exactly one Markdown table** with the columns `Feld | Wert` and nothing else: no heading, no prose before or after it, and no second table. Put remarks such as unreadable attributes or ambiguous matches into a `Hinweis` row of the same table.
+Unless the user specifies a different format, or authentication fails (see Errors), the final answer consists only of Markdown tables with two columns: no heading, no prose before or after them. Do not use a `Feld | Wert` header row. Instead, the first row of each table is the Markdown header row and holds the object itself (for users: `| Name | <Name> |`), followed by the `|---|---|` separator. Put remarks such as unreadable attributes or ambiguous matches into a `Hinweis` row of the relevant table.
 
-For a user lookup, use these rows in this order and omit rows whose value is empty:
+For a user lookup, output **one table per user**. If there are several users, separate the tables with one blank line so they render as separate tables. Use these rows in this order and omit rows whose value is empty:
 
-| Feld | Wert |
-|---|---|
 | Name | `Name` |
+|---|---|
 | User logon name (UPN) | `UserPrincipalName` |
-| User logon name (pre-Windows 2000) | `GROUP\<SamAccountName>` |
+| User logon name (pre-Windows 2000) | `GROUP\<SamAccountName> (<samaccountname in lowercase>)`, e.g. `GROUP\Alexander.Isaak (alexander.isaak)` |
 | E-Mail | `mail` |
 | Titel | `Title` |
 | Abteilung | `Department` |
@@ -47,7 +46,7 @@ For a user lookup, use these rows in this order and omit rows whose value is emp
 | Gruppen | group names, comma-separated |
 | Hinweis | only if needed |
 
-For other queries (groups, computers, lists), keep the same single `Feld | Wert` table. If there are several results, use one row per object with the object name as `Feld` and the key data as `Wert`.
+For other queries (groups, computers, lists), use the same style: one table per object, with the object name in the header row, and one blank line between the tables. For long lists (more than about 10 objects), use a single table with one row per object instead: the object name goes in the first column and the key data in the second. Use a header row that describes the list, e.g. `| Gruppe | Beschreibung |`.
 
 Default user query:
 
