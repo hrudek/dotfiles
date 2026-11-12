@@ -7,10 +7,12 @@
 
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { createUsageReader, credentialScope, type ReadOptions } from "./usage-support/cache.ts";
+import { installUsagePolling, type UsageDisplay } from "./usage-support/poller.ts";
 
-const STATUS_KEY = "codex-usage";
-const STATUS_EVENT = "usage-status:update";
 const REQUEST_TIMEOUT_MS = 15_000;
 const CODEX_BIN = process.env.CODEX_BIN ?? "codex";
 
@@ -30,15 +32,9 @@ interface CodexUsage {
 	rateLimits?: RateLimitSnapshot;
 }
 
-interface UsageResult {
-	status?: string;
-	details: string;
-	renderStatus?: () => string;
-}
-
 class CodexAuthError extends Error {}
 
-function readRateLimits(): Promise<CodexUsage> {
+function fetchRateLimits(): Promise<CodexUsage> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(CODEX_BIN, ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
 		let settled = false;
@@ -80,7 +76,10 @@ function readRateLimits(): Promise<CodexUsage> {
 					const text = message.error.message ?? "rate limit request failed";
 					return finish(/auth/i.test(text) ? new CodexAuthError(text) : new Error(text));
 				}
-				finish(undefined, message.result as CodexUsage);
+				const result = message.result as CodexUsage | undefined;
+				if (!result || typeof result !== "object") return finish(new Error("Invalid Codex usage response"));
+				const limits = result.rateLimits;
+				finish(undefined, { rateLimits: limits ? { primary: limits.primary, secondary: limits.secondary, planType: limits.planType } : undefined });
 			}
 		});
 
@@ -91,6 +90,13 @@ function readRateLimits(): Promise<CodexUsage> {
 		});
 	});
 }
+
+const reader = createUsageReader<CodexUsage>({
+	scope: () => credentialScope("codex", join(process.env.CODEX_HOME || join(homedir(), ".codex"), "auth.json"), CODEX_BIN),
+	fetch: fetchRateLimits,
+});
+
+export function readRateLimits(options: ReadOptions = {}) { return reader.read(options); }
 
 function windowLabel(window: RateLimitWindow, fallback: string): string {
 	const minutes = window.windowDurationMins;
@@ -122,7 +128,7 @@ function formatUsage(
 	usage: CodexUsage,
 	muted: (text: string) => string,
 	prominent: (text: string) => string,
-): UsageResult {
+): UsageDisplay {
 	const primary = usage.rateLimits?.primary;
 	const secondary = usage.rateLimits?.secondary;
 	const windows = [
@@ -152,77 +158,12 @@ function formatUsage(
 	};
 }
 
-async function fetchUsage(ctx: ExtensionContext): Promise<UsageResult> {
-	let usage: CodexUsage;
-	try {
-		usage = await readRateLimits();
-	} catch (error) {
-		if (error instanceof CodexAuthError) {
-			return { status: undefined, details: "No Codex CLI login found; run `codex login`" };
-		}
-		throw error;
-	}
-	return formatUsage(
-		usage,
-		(text) => ctx.ui.theme.fg("dim", text),
-		(text) => ctx.ui.theme.fg("accent", ctx.ui.theme.bold(text)),
-	);
-}
-
 export default function (pi: ExtensionAPI) {
-	let request: Promise<UsageResult> | undefined;
-	let active = false;
-	let lastResult: UsageResult | undefined;
-	let countdownTimer: ReturnType<typeof setInterval> | undefined;
-
-	function updateCountdown() {
-		if (!active || !lastResult?.renderStatus) return;
-		lastResult.status = lastResult.renderStatus();
-		pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: lastResult.status });
-	}
-
-	async function refresh(ctx: ExtensionContext): Promise<UsageResult> {
-		if (!request) request = fetchUsage(ctx).finally(() => { request = undefined; });
-
-		try {
-			const result = await request;
-			lastResult = result;
-			if (active) pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: result.status });
-			return result;
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "unknown error";
-			const result = { status: "Codex: unavailable", details: `Codex usage unavailable: ${message}` };
-			lastResult = result;
-			if (active) pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: result.status });
-			return result;
-		}
-	}
-
-	pi.on("session_start", (_event, ctx) => {
-		active = true;
-		pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: lastResult?.status });
-		void refresh(ctx);
-		if (countdownTimer) clearInterval(countdownTimer);
-		countdownTimer = setInterval(updateCountdown, 30_000);
-		countdownTimer.unref();
-	});
-
-	pi.on("agent_settled", (_event, ctx) => {
-		void refresh(ctx);
-	});
-
-	pi.on("session_shutdown", () => {
-		active = false;
-		if (countdownTimer) clearInterval(countdownTimer);
-		countdownTimer = undefined;
-		pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: undefined });
-	});
-
-	pi.registerCommand("codex-usage", {
-		description: "Refresh and show OpenAI Codex rate-limit usage",
-		handler: async (_args, ctx) => {
-			const result = await refresh(ctx);
-			ctx.ui.notify(result.details, result.status === "Codex: unavailable" ? "error" : "info");
-		},
+	installUsagePolling(pi, {
+		key: "codex-usage", label: "Codex", reader,
+		selected: (model) => model?.provider === "openai" || model?.provider === "openai-codex" || model?.api === "openai-codex-responses",
+		format: (usage, ctx) => formatUsage(usage, (text) => ctx.ui.theme.fg("dim", text), (text) => ctx.ui.theme.fg("accent", ctx.ui.theme.bold(text))),
+		missing: "No Codex CLI usage available; run `codex login`",
+		resets: (usage) => [usage.rateLimits?.primary?.resetsAt, usage.rateLimits?.secondary?.resetsAt].filter((at): at is number => typeof at === "number").map((at) => at * 1_000),
 	});
 }

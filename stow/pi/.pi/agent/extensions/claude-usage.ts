@@ -10,14 +10,14 @@
  * performs the refresh and keeps ownership of the rotating refresh token.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createUsageReader, credentialScope, httpError, type ReadOptions } from "./usage-support/cache.ts";
+import { installUsagePolling, type UsageDisplay } from "./usage-support/poller.ts";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const STATUS_KEY = "claude-usage";
-const STATUS_EVENT = "usage-status:update";
 const REQUEST_TIMEOUT_MS = 8_000;
 const API_BASE_URL = "https://api.anthropic.com";
 const USAGE_URL = `${API_BASE_URL}/api/oauth/usage`;
@@ -78,12 +78,6 @@ interface ClaudeUsage {
 	seven_day_sonnet?: UsageWindow | null;
 }
 
-interface UsageResult {
-	status?: string;
-	details: string;
-	renderStatus?: () => string;
-}
-
 interface WindowDisplay {
 	label: string;
 	used: number;
@@ -123,7 +117,7 @@ function formatUsage(
 	usage: ClaudeUsage,
 	muted: (text: string) => string,
 	prominent: (text: string) => string,
-): UsageResult {
+): UsageDisplay {
 	const windows = [
 		toWindow(usage.five_hour, "5h"),
 		toWindow(usage.seven_day, "7d"),
@@ -166,83 +160,37 @@ function authHeaders(accessToken: string): Record<string, string> {
 	};
 }
 
-async function fetchUsage(ctx: ExtensionContext): Promise<UsageResult> {
+async function fetchClaudeUsage(): Promise<ClaudeUsage | undefined> {
 	let accessToken = await getCliAccessToken();
-	if (!accessToken) {
-		return { details: "No Claude CLI login found; run `claude auth login`" };
-	}
+	if (!accessToken) return undefined;
 
 	let headers = authHeaders(accessToken);
 	let usageResponse = await fetch(USAGE_URL, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 	if (usageResponse.status === 401) {
 		accessToken = await getCliAccessToken(true);
-		if (!accessToken) return { details: "Claude CLI login expired; run `claude auth login`" };
+		if (!accessToken) return undefined;
 		headers = authHeaders(accessToken);
 		usageResponse = await fetch(USAGE_URL, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
 	}
-	if (!usageResponse.ok) throw new Error(`Anthropic usage API returned ${usageResponse.status}`);
+	if (!usageResponse.ok) throw httpError("Anthropic usage API", usageResponse);
 
-	return formatUsage(
-		(await usageResponse.json()) as ClaudeUsage,
-		(text) => ctx.ui.theme.fg("dim", text),
-		(text) => ctx.ui.theme.fg("accent", ctx.ui.theme.bold(text)),
-	);
+	const usage = (await usageResponse.json()) as ClaudeUsage;
+	return { five_hour: usage.five_hour, seven_day: usage.seven_day, seven_day_opus: usage.seven_day_opus, seven_day_sonnet: usage.seven_day_sonnet };
 }
 
+const reader = createUsageReader<ClaudeUsage>({
+	scope: () => credentialScope("claude", credentialsPath()),
+	fetch: fetchClaudeUsage,
+});
+
+export function readClaudeUsage(options: ReadOptions = {}) { return reader.read(options); }
+
 export default function (pi: ExtensionAPI) {
-	let request: Promise<UsageResult> | undefined;
-	let active = false;
-	let lastResult: UsageResult | undefined;
-	let countdownTimer: ReturnType<typeof setInterval> | undefined;
-
-	function updateCountdown() {
-		if (!active || !lastResult?.renderStatus) return;
-		lastResult.status = lastResult.renderStatus();
-		pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: lastResult.status });
-	}
-
-	async function refresh(ctx: ExtensionContext): Promise<UsageResult> {
-		if (!request) request = fetchUsage(ctx).finally(() => { request = undefined; });
-
-		try {
-			const result = await request;
-			lastResult = result;
-			if (active) pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: result.status });
-			return result;
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "unknown error";
-			const result = { status: "Claude: unavailable", details: `Claude usage unavailable: ${message}` };
-			lastResult = result;
-			if (active) pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: result.status });
-			return result;
-		}
-	}
-
-	pi.on("session_start", (_event, ctx) => {
-		active = true;
-		pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: lastResult?.status });
-		void refresh(ctx);
-		if (countdownTimer) clearInterval(countdownTimer);
-		countdownTimer = setInterval(updateCountdown, 30_000);
-		countdownTimer.unref();
-	});
-
-	pi.on("agent_settled", (_event, ctx) => {
-		void refresh(ctx);
-	});
-
-	pi.on("session_shutdown", () => {
-		active = false;
-		if (countdownTimer) clearInterval(countdownTimer);
-		countdownTimer = undefined;
-		pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: undefined });
-	});
-
-	pi.registerCommand("claude-usage", {
-		description: "Refresh and show Claude rate-limit usage",
-		handler: async (_args, ctx) => {
-			const result = await refresh(ctx);
-			ctx.ui.notify(result.details, result.status === "Claude: unavailable" ? "error" : "info");
-		},
+	installUsagePolling(pi, {
+		key: "claude-usage", label: "Claude", reader,
+		selected: (model) => model?.provider === "pi-claude-cli",
+		format: (usage, ctx) => formatUsage(usage, (text) => ctx.ui.theme.fg("dim", text), (text) => ctx.ui.theme.fg("accent", ctx.ui.theme.bold(text))),
+		missing: "No Claude CLI login found or login expired; run `claude auth login`",
+		resets: (usage) => [usage.five_hour, usage.seven_day, usage.seven_day_opus, usage.seven_day_sonnet].map((window) => window?.resets_at ? Date.parse(window.resets_at) : NaN),
 	});
 }

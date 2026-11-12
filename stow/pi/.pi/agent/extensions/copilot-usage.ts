@@ -5,13 +5,13 @@
  * Uses the OAuth credential already stored by `/login github-copilot`.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createUsageReader, credentialScope, httpError } from "./usage-support/cache.ts";
+import { installUsagePolling, type UsageDisplay } from "./usage-support/poller.ts";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const STATUS_KEY = "copilot-usage";
-const STATUS_EVENT = "usage-status:update";
 const REQUEST_TIMEOUT_MS = 8_000;
 const CONFIG_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 const AUTH_PATH = join(CONFIG_DIR, "auth.json");
@@ -35,11 +35,6 @@ interface CopilotUser {
 	quota_snapshots?: {
 		premium_interactions?: QuotaSnapshot;
 	};
-}
-
-interface UsageResult {
-	status?: string;
-	details: string;
 }
 
 function normalizeDomain(value: unknown): string | undefined {
@@ -77,7 +72,7 @@ function compactNumber(value: number): string {
 	return `${compact >= 10 ? compact.toFixed(0) : compact.toFixed(1).replace(/\.0$/, "")}k`;
 }
 
-function formatQuota(quota: QuotaSnapshot, resetDate?: string): UsageResult {
+function formatQuota(quota: QuotaSnapshot, resetDate?: string): UsageDisplay {
 	if (quota.unlimited) {
 		return { status: "Copilot: unlimited", details: "Copilot premium requests: unlimited" };
 	}
@@ -105,12 +100,10 @@ function formatQuota(quota: QuotaSnapshot, resetDate?: string): UsageResult {
 	};
 }
 
-async function fetchUsage(): Promise<UsageResult> {
+async function fetchUsage(): Promise<CopilotUser | undefined> {
 	const credential = await readCredential();
 	if (!credential || typeof credential.refresh !== "string" || credential.refresh === "") {
-		return {
-			details: "No GitHub Copilot login found; run /login",
-		};
+		return undefined;
 	}
 
 	const response = await fetch(userEndpoint(credential.enterpriseUrl), {
@@ -125,61 +118,22 @@ async function fetchUsage(): Promise<UsageResult> {
 		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 	});
 
-	if (!response.ok) {
-		throw new Error(`GitHub API returned ${response.status}`);
-	}
+	if (!response.ok) throw httpError("GitHub API", response);
 
 	const user = (await response.json()) as CopilotUser;
-	const quota = user.quota_snapshots?.premium_interactions;
-	if (!quota) {
-		return { status: "Copilot: no quota data", details: "No premium-request quota in GitHub response" };
-	}
-
-	return formatQuota(quota, user.quota_reset_date);
+	return { quota_reset_date: user.quota_reset_date, quota_snapshots: { premium_interactions: user.quota_snapshots?.premium_interactions } };
 }
 
+const reader = createUsageReader<CopilotUser>({ scope: () => credentialScope("copilot", AUTH_PATH), fetch: fetchUsage });
+
 export default function (pi: ExtensionAPI) {
-	let request: Promise<UsageResult> | undefined;
-	let active = false;
-	let lastResult: UsageResult | undefined;
-
-	async function refresh(ctx: ExtensionContext): Promise<UsageResult> {
-		if (!request) request = fetchUsage().finally(() => { request = undefined; });
-
-		try {
-			const result = await request;
-			lastResult = result;
-			if (active) pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: result.status });
-			return result;
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "unknown error";
-			const result = { status: "Copilot: unavailable", details: `Copilot usage unavailable: ${message}` };
-			lastResult = result;
-			if (active) pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: result.status });
-			return result;
-		}
-	}
-
-	pi.on("session_start", (_event, ctx) => {
-		active = true;
-		pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: lastResult?.status });
-		void refresh(ctx);
-	});
-
-	pi.on("agent_settled", (_event, ctx) => {
-		void refresh(ctx);
-	});
-
-	pi.on("session_shutdown", () => {
-		active = false;
-		pi.events.emit(STATUS_EVENT, { key: STATUS_KEY, status: undefined });
-	});
-
-	pi.registerCommand("copilot-usage", {
-		description: "Refresh and show GitHub Copilot premium-request usage",
-		handler: async (_args, ctx) => {
-			const result = await refresh(ctx);
-			ctx.ui.notify(result.details, result.status === "Copilot: unavailable" ? "error" : "info");
-		},
+	installUsagePolling(pi, {
+		key: "copilot-usage", label: "Copilot", reader,
+		selected: (model) => model?.provider === "github-copilot",
+		format: (usage) => usage.quota_snapshots?.premium_interactions
+			? formatQuota(usage.quota_snapshots.premium_interactions, usage.quota_reset_date)
+			: { status: "Copilot: no quota data", details: "No premium-request quota in GitHub response" },
+		missing: "No GitHub Copilot login found; run /login",
+		resets: (usage) => usage.quota_reset_date ? [Date.parse(usage.quota_reset_date)] : [],
 	});
 }
