@@ -1,0 +1,11 @@
+{
+  "$schema": "https://pi.dev/schemas/models.schema.json",
+  "providers": {
+    "pi-claude-cli": {
+      "modelOverrides": {
+        "claude-opus-5-5": { "contextWindow": 272000 },
+        "claude-sonnet-5-5": { "contextWindow": 272000 }
+      }
+    }
+  }
+}
