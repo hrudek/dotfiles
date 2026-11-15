@@ -20,7 +20,7 @@ function readerHarness(fetch, extra = {}) {
 	return { reader, advance: (ms) => { clock += ms; } };
 }
 
-test("single-flight and cache avoid duplicate queries; fresh has a five-second floor", async () => {
+test("single-flight and cache avoid duplicate queries; fresh has a one-minute floor", async () => {
 	let calls = 0;
 	let finish;
 	const h = readerHarness(() => { calls++; return new Promise((resolve) => { finish = resolve; }); });
@@ -28,18 +28,29 @@ test("single-flight and cache avoid duplicate queries; fresh has a five-second f
 	await flush(); assert.equal(calls, 1);
 	finish({ used: 12 });
 	assert.equal((await a).value.used, 12); assert.equal((await b).value.used, 12);
-	h.advance(4_000); await h.reader.read({ fresh: true }); assert.equal(calls, 1);
+	h.advance(59_000); await h.reader.read({ fresh: true }); assert.equal(calls, 1);
 	h.advance(2_000);
 	const c = h.reader.read({ fresh: true }); await flush(); assert.equal(calls, 2);
 	finish({ used: 13 }); await c;
-	h.advance(29_000); await h.reader.read(); assert.equal(calls, 2);
+	h.advance(299_000); await h.reader.read(); assert.equal(calls, 2);
+	h.advance(2_000); const d = h.reader.read(); await flush(); assert.equal(calls, 3);
+	finish({ used: 14 }); await d;
+});
+
+test("HTTP 429 without Retry-After backs off 10m, then 20m", async () => {
+	let calls = 0;
+	const h = readerHarness(async () => { calls++; throw httpError("API", { status: 429, headers: { get: () => null } }); });
+	const first = await h.reader.read(); assert.equal(first.retryAt - first.checkedAt, 600_000);
+	h.advance(599_000); await h.reader.read({ fresh: true }); assert.equal(calls, 1);
+	h.advance(1_000); const second = await h.reader.read(); assert.equal(calls, 2);
+	assert.equal(second.retryAt - second.checkedAt, 1_200_000);
 });
 
 test("errors retain last success; exponential backoff also applies to forced reads", async () => {
 	let failing = false;
 	let calls = 0;
 	const h = readerHarness(async () => { calls++; if (failing) throw new Error("offline"); return { used: 62 }; });
-	await h.reader.read(); h.advance(31_000); failing = true;
+	await h.reader.read(); h.advance(301_000); failing = true;
 	const failed = await h.reader.read();
 	assert.equal(failed.value.used, 62); assert.equal(failed.updatedAt, START);
 	assert.equal(failed.retryAt - failed.checkedAt, 60_000);
@@ -179,9 +190,9 @@ function pollHarness(t, { reset, customReader } = {}) {
 	return { ctx, emit, reads, updates, notices, command: () => commands.get("codex-usage").handler("", ctx), setNext: (value) => { next = value; } };
 }
 
-test("selected provider polls every 5m while running and never while idle", async (t) => {
+test("selected provider polls every 15m while running and never while idle", async (t) => {
 	const h = pollHarness(t); await h.emit("session_start"); await h.emit("agent_start");
-	t.mock.timers.tick(295_000); await flush(); assert.equal(h.reads.length, 1);
+	t.mock.timers.tick(895_000); await flush(); assert.equal(h.reads.length, 1);
 	t.mock.timers.tick(5_000); await flush(); assert.equal(h.reads.length, 2);
 	await h.emit("agent_settled"); const count = h.reads.length;
 	t.mock.timers.tick(3_600_000); await flush(); assert.equal(h.reads.length, count);
@@ -189,12 +200,11 @@ test("selected provider polls every 5m while running and never while idle", asyn
 	await h.emit("agent_start"); t.mock.timers.tick(5_000); await flush(); assert.equal(h.reads.length, count + 1); // Stale data refreshes when work resumes.
 });
 
-test("inactive provider polls only every 10m while running; switching models refreshes it", async (t) => {
+test("inactive provider never polls in the background; switching models refreshes it", async (t) => {
 	const h = pollHarness(t); h.ctx.model.provider = "pi-claude-cli";
 	await h.emit("session_start"); await h.emit("agent_start");
-	t.mock.timers.tick(595_000); await flush(); assert.equal(h.reads.length, 1);
-	t.mock.timers.tick(5_000); await flush(); assert.equal(h.reads.length, 2);
-	h.ctx.model.provider = "openai"; await h.emit("model_select"); assert.equal(h.reads.length, 3);
+	t.mock.timers.tick(3_600_000); await flush(); assert.equal(h.reads.length, 1);
+	h.ctx.model.provider = "openai"; await h.emit("model_select"); assert.equal(h.reads.length, 2);
 });
 
 test("refreshes just after expected reset, and manual commands request fresh data", async (t) => {

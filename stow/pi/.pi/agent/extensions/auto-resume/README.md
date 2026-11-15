@@ -29,7 +29,7 @@ back when the wait ends or is cancelled.
   failed manual compaction.
 - Uses the same cached usage readers as `codex-usage.ts` and `claude-usage.ts`.
   Its own queries also update the display. The check requests fresh usage (data at
-  most 5 seconds old may be reused); HTTP backoff is not bypassed. Failed queries
+  most 1 minute old may be reused); HTTP backoff is not bypassed. Failed queries
   never yield stale cache values as a fresh go-ahead.
   **The Codex CLI must be logged in with the same account as Pi.**
   Polling and cache details are in `../usage-support/README.md`.

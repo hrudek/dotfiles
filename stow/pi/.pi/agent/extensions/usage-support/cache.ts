@@ -13,20 +13,39 @@ export interface Snapshot<T> {
 	retryAt?: number;
 }
 export interface ReadOptions { fresh?: boolean; maxAgeMs?: number }
+
+/**
+ * Central knobs for how often provider usage endpoints are queried.
+ * Anthropic's /api/oauth/usage rate-limits aggressively, so values favour
+ * slightly stale data over HTTP 429s.
+ */
+export const USAGE_TIMING = {
+	/** Normal reads reuse cached data up to this age (all Pi sessions share the file cache). */
+	cacheMaxAgeMs: 5 * 60_000,
+	/** Even forced reads (manual command, Auto-Resume) reuse data up to this age. */
+	freshFloorMs: 60_000,
+	/** Generic errors: 1, 2, 4 … minutes of backoff, capped. */
+	errorBackoffMs: 60_000,
+	errorBackoffMaxMs: 15 * 60_000,
+	/** HTTP 429 without a longer Retry-After: 10, 20, 40 … minutes, capped. */
+	rateLimitBackoffMs: 10 * 60_000,
+	rateLimitBackoffMaxMs: 60 * 60_000,
+} as const;
 export interface UsageReader<T> {
 	read(options?: ReadOptions): Promise<Snapshot<T>>;
 	subscribe(listener: (snapshot: Snapshot<T>) => void): () => void;
 }
 export class UsageError extends Error {
 	retryAfterMs?: number;
-	constructor(message: string, retryAfterMs?: number) { super(message); this.retryAfterMs = retryAfterMs; }
+	status?: number;
+	constructor(message: string, retryAfterMs?: number, status?: number) { super(message); this.retryAfterMs = retryAfterMs; this.status = status; }
 }
 
 export function httpError(label: string, response: { status: number; headers: { get(name: string): string | null } }, now = Date.now()): UsageError {
 	const header = response.headers.get("retry-after");
 	const seconds = header === null ? NaN : Number(header);
 	const delay = Number.isFinite(seconds) ? seconds * 1_000 : header ? Date.parse(header) - now : NaN;
-	return new UsageError(`${label} returned HTTP ${response.status}`, Number.isFinite(delay) ? Math.max(0, delay) : undefined);
+	return new UsageError(`${label} returned HTTP ${response.status}`, Number.isFinite(delay) ? Math.max(0, delay) : undefined, response.status);
 }
 
 /** Auth-file fingerprint prevents sharing quota snapshots across different logins. */
@@ -130,7 +149,9 @@ export function createUsageReader<T>(options: Options<T>): UsageReader<T> {
 	function reusable(snapshot: Snapshot<T> | undefined, options: ReadOptions) {
 		if (!snapshot) return false;
 		if (snapshot.retryAt && snapshot.retryAt > now()) return true;
-		return now() >= snapshot.checkedAt && now() - snapshot.checkedAt < (options.fresh ? 5_000 : options.maxAgeMs ?? 30_000);
+		// After an error the backoff alone decides; do not stretch it by cache age.
+		if (snapshot.error) return false;
+		return now() >= snapshot.checkedAt && now() - snapshot.checkedAt < (options.fresh ? USAGE_TIMING.freshFloorMs : options.maxAgeMs ?? USAGE_TIMING.cacheMaxAgeMs);
 	}
 
 	async function refresh(key: string, readOptions: ReadOptions): Promise<Snapshot<T>> {
@@ -150,7 +171,10 @@ export function createUsageReader<T>(options: Options<T>): UsageReader<T> {
 				return publish(key, snapshot);
 			} catch (error) {
 				const failures = Math.min(16, (previous?.failures ?? 0) + 1);
-				const backoff = Math.min(15 * 60_000, 60_000 * 2 ** (failures - 1)) * (1 + random() * 0.1);
+				const limited = error instanceof UsageError && error.status === 429;
+				const base = limited ? USAGE_TIMING.rateLimitBackoffMs : USAGE_TIMING.errorBackoffMs;
+				const cap = limited ? USAGE_TIMING.rateLimitBackoffMaxMs : USAGE_TIMING.errorBackoffMaxMs;
+				const backoff = Math.min(cap, base * 2 ** (failures - 1)) * (1 + random() * 0.1);
 				const delay = Math.max(backoff, error instanceof UsageError ? error.retryAfterMs ?? 0 : 0);
 				const snapshot: Snapshot<T> = { ...previous, checkedAt: now(), failures, error: error instanceof Error ? error.message : "Usage query failed", retryAt: now() + delay };
 				await store.write(key, snapshot).catch(() => {});

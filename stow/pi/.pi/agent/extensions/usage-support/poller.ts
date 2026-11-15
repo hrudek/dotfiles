@@ -1,5 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Snapshot, UsageReader } from "./cache.ts";
+import { USAGE_TIMING, type Snapshot, type UsageReader } from "./cache.ts";
+
+/** Background polling of the selected provider during agent runs. */
+const SELECTED_INTERVAL_MS = 15 * 60_000;
 
 export interface UsageDisplay {
 	status?: string;
@@ -33,8 +36,9 @@ export function installUsagePolling<T>(pi: ExtensionAPI, options: Options<T>) {
 	let request: Promise<Snapshot<T> | undefined> | undefined;
 
 	function interval() {
-		// No background polling while idle; agent_settled and session start still refresh once.
-		return !running ? Infinity : options.selected(ctx?.model) ? 300_000 : 600_000;
+		// No background polling while idle or for unselected providers; their
+		// display refreshes on session start and model switch (cache permitting).
+		return running && options.selected(ctx?.model) ? SELECTED_INTERVAL_MS : Infinity;
 	}
 	function display(): UsageDisplay {
 		if (!ctx || snapshot?.value === undefined) return { status: snapshot?.error ? `${options.label}: unavailable` : undefined, details: snapshot?.error ?? options.missing };
@@ -60,7 +64,7 @@ export function installUsagePolling<T>(pi: ExtensionAPI, options: Options<T>) {
 			.filter((at) => Number.isFinite(at) && at > snapshot!.checkedAt);
 		return resets.length ? Math.min(...resets) : Infinity;
 	}
-	async function refresh(fresh = false, maxAgeMs = 30_000) {
+	async function refresh(fresh = false, maxAgeMs: number = USAGE_TIMING.cacheMaxAgeMs) {
 		if (!active) return undefined;
 		if (request) return request;
 		const version = generation;
@@ -90,7 +94,9 @@ export function installUsagePolling<T>(pi: ExtensionAPI, options: Options<T>) {
 			if (!running) return;
 			if (snapshot?.retryAt && snapshot.retryAt > now()) return;
 			const reset = resetDue();
-			if (now() >= Math.min(nextAt, reset)) void refresh(now() >= reset);
+			// Reset refreshes only for the provider in use.
+			const due = options.selected(ctx?.model) ? Math.min(nextAt, reset) : nextAt;
+			if (now() >= due) void refresh(now() >= reset);
 		}, 5_000);
 		timer.unref();
 	});
@@ -102,7 +108,8 @@ export function installUsagePolling<T>(pi: ExtensionAPI, options: Options<T>) {
 	pi.on("agent_settled", (_event, context) => {
 		ctx = context;
 		running = false;
-		if (options.selected(ctx.model)) void refresh(false, 15_000);
+		// Uses the normal cache age: many short turns must not trigger a query each.
+		if (options.selected(ctx.model)) void refresh();
 	});
 	pi.on("model_select", (_event, context) => {
 		ctx = context;

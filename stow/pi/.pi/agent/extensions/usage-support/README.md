@@ -5,16 +5,21 @@ Auto-Resume uses the same Codex/Claude readers.
 
 ## When queries happen
 
-- Session start or `/reload`: read the existing short-lived cache or query.
-- Selected provider while an agent run is active: about every **5 minutes**.
-- Unselected providers while an agent run is active: about every **10 minutes**.
+All intervals live in `USAGE_TIMING` (`cache.ts`) and `SELECTED_INTERVAL_MS`
+(`poller.ts`). They favour slightly stale data over HTTP 429s.
+
+- Session start or `/reload`: reuse the cache if under 5 minutes old, else query.
+- Selected provider while an agent run is active: about every **15 minutes**.
+- Unselected providers: **no** background polling; refreshed only on session
+  start and model switch.
 - While **idle** (no agent run): **no** background polling, not even at reset
   times. Stale data is refreshed when the next agent run starts.
 - After an agent run finishes: refresh, provided the last query is at least
-  15 seconds old.
+  5 minutes old.
 - After switching the model to a provider: refresh, unless the data is still in
-  the 30-second cache.
-- Expected reset: during an agent run, also refresh from **30 seconds after the reset**.
+  the 5-minute cache.
+- Expected reset: during an agent run, refresh the selected provider from
+  **30 seconds after the reset**.
 - `/codex-usage`, `/claude-usage`, `/copilot-usage`: request a fresh query.
 
 Regular intervals get up to 10 % random extra delay so parallel sessions do not
@@ -24,9 +29,10 @@ mode the displays start no background jobs.
 
 ## Cache and concurrency
 
-- Normal queries reuse results up to 30 seconds old.
-- Manual queries and Auto-Resume request fresh data; results at most 5 seconds old
+- Normal queries reuse results up to 5 minutes old.
+- Manual queries and Auto-Resume request fresh data; results at most 1 minute old
   may still be reused.
+- Error snapshots are reused only until their backoff (`retryAt`) expires.
 - Concurrent queries for the same account within one process are merged.
 - An account-bound file cache and an exclusive file lock prevent simultaneous
   identical provider queries across multiple Pi processes too.
@@ -51,7 +57,7 @@ failed refresh. There is **no additional age or timestamp display**. Details are
 available through the respective usage command.
 
 Errors lead to 1, 2, 4, 8, then at most 15 minutes of backoff with some random
-extra delay. A longer HTTP `Retry-After` is respected. Manual commands and
+extra delay. HTTP 429 uses 10, 20, 40, then at most 60 minutes. A longer HTTP `Retry-After` is respected. Manual commands and
 Auto-Resume do not bypass this block either. Successful queries reset the backoff.
 
 New results from Auto-Resume are published to the display immediately within the
