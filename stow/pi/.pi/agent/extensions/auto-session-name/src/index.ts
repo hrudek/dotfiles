@@ -19,6 +19,9 @@
  *
  * The naming model defaults to the first available entry of PREFERRED_MODELS
  * and can be overridden with PI_AUTO_SESSION_NAME_MODEL=provider/model-id.
+ * If a request fails (usage limit, outage, timeout), the next candidate is
+ * tried, ending with a Claude model and the session model. A failed model is
+ * moved to the end of the list for a cooldown so later titles do not wait for it.
  */
 
 import { readdir, readFile, stat } from "node:fs/promises";
@@ -42,6 +45,9 @@ const PREFERRED_MODELS: ReadonlyArray<readonly [provider: string, id: string]> =
 	["pi-claude-cli", "claude-haiku-4-5"],
 ];
 
+/** How long a failed naming model is tried only after all others. */
+const MODEL_COOLDOWN_MS = 15 * 60 * 1000;
+
 const FALLBACK_DELAY_MS = 3 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_TOKENS = 512;
@@ -64,6 +70,8 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 	let generationEpoch = 0;
 	let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
 	let fallbackRequest: Promise<Result> | undefined;
+	/** provider/id → time until which the model is deprioritized after a failure. */
+	const cooldowns = new Map<string, number>();
 
 	function clearFallback(): void {
 		if (fallbackTimer !== undefined) clearTimeout(fallbackTimer);
@@ -103,44 +111,41 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 			const transcript = buildTranscript(messages);
 			if (!transcript) return { ok: false, reason: "no conversation yet" };
 
-			const model = resolveModel(ctx);
-			if (!model) {
+			const models = resolveModels(ctx);
+			if (models.length === 0) {
 				failures = MAX_AUTO_FAILURES;
 				return { ok: false, reason: "no naming model with configured auth" };
 			}
 
 			const otherTitles = await recentTitles(ctx);
-			const stream = await ctx.modelRegistry.streamSimple(
-				model,
-				{
-					systemPrompt: SYSTEM_PROMPT,
-					messages: [
-						{
-							role: "user",
-							content: [
-								{
-									type: "text",
-									text: buildUserPrompt({ transcript, project: basename(ctx.cwd), otherTitles }),
-								},
-							],
-							timestamp: Date.now(),
-						},
-					],
-				},
-				{
-					reasoning: "minimal",
-					maxTokens: MAX_OUTPUT_TOKENS,
-					cacheRetention: "none",
-					timeoutMs: REQUEST_TIMEOUT_MS,
-				},
-			);
-			const response = await stream.result();
+			const prompt = buildUserPrompt({ transcript, project: basename(ctx.cwd), otherTitles });
 
-			// The session may have been replaced (/new, /resume, quit) meanwhile.
-			if (!active || epoch !== generationEpoch) return { ok: false, reason: "session or run changed" };
-			if (response.stopReason === "error" || response.stopReason === "aborted") {
+			let model: Model | undefined;
+			let response: Awaited<ReturnType<typeof requestTitle>> | undefined;
+			const errors: string[] = [];
+			for (const candidate of models) {
+				let reason: string;
+				try {
+					const attempt = await requestTitle(ctx, candidate, prompt);
+					// The session may have been replaced (/new, /resume, quit) meanwhile.
+					if (!active || epoch !== generationEpoch) return { ok: false, reason: "session or run changed" };
+					if (attempt.stopReason !== "error" && attempt.stopReason !== "aborted") {
+						cooldowns.delete(modelKey(candidate));
+						model = candidate;
+						response = attempt;
+						break;
+					}
+					reason = attempt.errorMessage ?? `request ${attempt.stopReason}`;
+				} catch (error) {
+					if (!active || epoch !== generationEpoch) return { ok: false, reason: "session or run changed" };
+					reason = error instanceof Error ? error.message : String(error);
+				}
+				cooldowns.set(modelKey(candidate), Date.now() + MODEL_COOLDOWN_MS);
+				errors.push(`${modelKey(candidate)}: ${reason}`);
+			}
+			if (!model || !response) {
 				failures++;
-				return { ok: false, reason: response.errorMessage ?? `request ${response.stopReason}` };
+				return { ok: false, reason: errors.join("; ") };
 			}
 
 			const text = response.content
@@ -168,21 +173,26 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 		}
 	}
 
-	function resolveModel(ctx: ExtensionContext): Model | undefined {
-		const usable = (m: Model | undefined): m is Model => !!m && ctx.modelRegistry.hasConfiguredAuth(m);
+	/** All usable naming models in order of preference; recently failed ones last. */
+	function resolveModels(ctx: ExtensionContext): Model[] {
+		const candidates: Model[] = [];
+		const add = (m: Model | undefined) => {
+			if (!m || !ctx.modelRegistry.hasConfiguredAuth(m)) return;
+			if (candidates.some((c) => modelKey(c) === modelKey(m))) return;
+			candidates.push(m);
+		};
 
 		const override = process.env[MODEL_ENV]?.trim();
 		if (override) {
 			const slash = override.indexOf("/");
-			const model =
-				slash > 0 ? ctx.modelRegistry.find(override.slice(0, slash), override.slice(slash + 1)) : undefined;
-			if (usable(model)) return model;
+			if (slash > 0) add(ctx.modelRegistry.find(override.slice(0, slash), override.slice(slash + 1)));
 		}
-		for (const [provider, id] of PREFERRED_MODELS) {
-			const model = ctx.modelRegistry.find(provider, id);
-			if (usable(model)) return model;
-		}
-		return usable(ctx.model) ? ctx.model : undefined;
+		for (const [provider, id] of PREFERRED_MODELS) add(ctx.modelRegistry.find(provider, id));
+		add(ctx.model);
+
+		const now = Date.now();
+		const cooling = (m: Model) => (cooldowns.get(modelKey(m)) ?? 0) > now;
+		return [...candidates.filter((m) => !cooling(m)), ...candidates.filter(cooling)];
 	}
 
 	pi.on("session_start", async (event, ctx) => {
@@ -246,6 +256,27 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 			else ctx.ui.notify(`No new title: ${result.reason}`, "warning");
 		},
 	});
+}
+
+function modelKey(model: Model): string {
+	return `${model.provider}/${model.id}`;
+}
+
+async function requestTitle(ctx: ExtensionContext, model: Model, prompt: string) {
+	const stream = await ctx.modelRegistry.streamSimple(
+		model,
+		{
+			systemPrompt: SYSTEM_PROMPT,
+			messages: [{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }],
+		},
+		{
+			reasoning: "minimal",
+			maxTokens: MAX_OUTPUT_TOKENS,
+			cacheRetention: "none",
+			timeoutMs: REQUEST_TIMEOUT_MS,
+		},
+	);
+	return stream.result();
 }
 
 function collectMessages(ctx: ExtensionContext): TranscriptMessage[] {

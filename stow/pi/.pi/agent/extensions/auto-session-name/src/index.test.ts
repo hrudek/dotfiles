@@ -42,7 +42,7 @@ function harness(initialName?: string) {
 	};
 	autoSessionName(pi as any);
 	return {
-		branch, requests,
+		branch, requests, ctx: ctx as any,
 		name: () => name,
 		rename: (value: string) => { name = value; },
 		delayResponse: (gate: Promise<void>) => { responseGate = gate; },
@@ -263,4 +263,35 @@ test("a provisional title can still be refined after reload", async () => {
 	await h.emit("agent_settled", { aborted: false });
 	assert.equal(h.name(), "Session Titles");
 	assert.equal(h.branch.at(-1).data.provisional, false);
+});
+
+test("falls back to the next model when the preferred one fails, and deprioritizes it", async () => {
+	const h = harness();
+	const calls: string[] = [];
+	const models: Record<string, { provider: string; id: string }> = {
+		"openai/gpt-6-luna": { provider: "openai", id: "gpt-6-luna" },
+		"pi-claude-cli/claude-haiku-4-5": { provider: "pi-claude-cli", id: "claude-haiku-4-5" },
+	};
+	h.ctx.modelRegistry.find = (provider: string, id: string) => models[`${provider}/${id}`];
+	const stream = h.ctx.modelRegistry.streamSimple;
+	h.ctx.modelRegistry.streamSimple = async (model: any, request: unknown) => {
+		calls.push(`${model.provider}/${model.id}`);
+		if (model.provider === "openai") {
+			return { result: async () => ({ stopReason: "error", errorMessage: "usage limit reached", content: [] }) };
+		}
+		return stream(model, request);
+	};
+	await h.emit("session_start", { reason: "new" });
+	h.message("user", "Change session naming");
+	h.message("assistant", "Complete answer");
+	await h.emit("agent_settled", { aborted: false });
+	assert.equal(h.name(), "Session Titles");
+	assert.deepEqual(calls, ["openai/gpt-6-luna", "pi-claude-cli/claude-haiku-4-5"]);
+	assert.equal(h.branch.at(-1).data.model, "pi-claude-cli/claude-haiku-4-5");
+
+	calls.length = 0;
+	h.title("Other Title");
+	await h.retitle();
+	assert.equal(h.name(), "Other Title");
+	assert.deepEqual(calls, ["pi-claude-cli/claude-haiku-4-5"]);
 });
