@@ -5,7 +5,9 @@
   "type": "module",
   "description": "Give pi sessions a short English title that shows up in terminal and herdr tabs",
   "scripts": {
-    "test": "node --test \"src/**/*.test.ts\""
+    "check": "npm run typecheck && npm test",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
   },
   "pi": {
     "extensions": [
@@ -14,5 +16,9 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2"
   }
 }
