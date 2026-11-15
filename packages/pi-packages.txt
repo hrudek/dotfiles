@@ -1,0 +1,6 @@
+# Pi packages installed with `pi install` (user scope, ~/.pi/agent/settings.json).
+# Claude subscription provider for Pi.
+git:github.com/dmmulroy/pi-claude-cli
+# Web search and page fetching (zero-config via Exa MCP; optional keys in
+# ~/.pi/agent/web-search.json, which must stay untracked).
+npm:pi-web-access

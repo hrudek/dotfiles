@@ -362,6 +362,10 @@ selection; common packages a platform does not select are unstowed.
 
 Integration and plugin sources are also declared in `packages/`. `dotctl`
 installs and updates them idempotently as part of the normal apply flow.
+This includes Pi packages from `packages/pi-packages.txt` (for example the
+`pi-web-access` web search), which `dotctl` installs with `pi install` into
+`~/.pi/agent/settings.json`; `dotctl doctor` reports missing ones. Optional
+web search API keys belong in the untracked `~/.pi/agent/web-search.json`.
 
 Pi extensions with a `package.json` under `stow/pi/.pi/agent/extensions/`
 carry a committed `package-lock.json`. On Linux, the integrations layer runs

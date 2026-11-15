@@ -1068,6 +1068,10 @@ sync_integrations() {
     esac
     run mise exec --cd "$workdir" -- herdr integration install "$integration"
   done < <(load_list "$REPO/packages/herdr-integrations.txt")
+  info "Syncing Pi packages"
+  # `pi install` is idempotent: it updates an existing install and never
+  # duplicates the entry in ~/.pi/agent/settings.json.
+  while IFS= read -r source; do run mise exec --cd "$workdir" -- pi install "$source"; done < <(load_list "$REPO/packages/pi-packages.txt")
   if [[ "$(platform)" != windows ]]; then
     if command -v az >/dev/null 2>&1 || $DRY_RUN; then
       run mise run --cd "$REPO" azure:extensions
@@ -1386,6 +1390,20 @@ EOF
       check_ok "Pi extension dev dependencies are installed"
     else
       check_fail "Pi extension dev dependencies missing: ${missing_extension_deps[*]} (run: mise run --cd $REPO pi:extensions)"
+    fi
+  fi
+
+  if command -v mise >/dev/null 2>&1 && mise which --cd "$(mise_workdir)" pi >/dev/null 2>&1; then
+    local pi_list pi_source
+    local -a missing_pi_packages=()
+    pi_list="$(mise exec --cd "$(mise_workdir)" -- pi list 2>/dev/null || true)"
+    while IFS= read -r pi_source; do
+      grep -Fxq "  $pi_source" <<< "$pi_list" || missing_pi_packages+=("$pi_source")
+    done < <(load_list "$REPO/packages/pi-packages.txt")
+    if ((${#missing_pi_packages[@]} == 0)); then
+      check_ok "Pi packages are installed"
+    else
+      check_fail "Pi packages missing: ${missing_pi_packages[*]} (run: dotctl apply --only integrations)"
     fi
   fi
 
