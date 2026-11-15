@@ -7,12 +7,13 @@
  * (`π - <name> - <cwd>`), where tab-naming tools such as herdr plugins pick it
  * up. This extension only sets the name; it knows nothing about herdr.
  *
- * - A title is generated as soon as the first prompt is sent, and retried
- *   after the run if the prompt had no identifiable topic yet.
+ * - A title is generated after the first complete agent answer, and retried
+ *   after later answers if there is no identifiable topic yet.
+ * - Aborted or failed runs do not trigger automatic naming.
  * - Names you set yourself (/name) are never overwritten.
  * - /new starts unnamed and gets a fresh title; /resume keeps the stored one.
- * - /fork inherits the parent's title and replaces it after the first prompt
- *   in the fork, unless the parent's name was set by hand.
+ * - /fork inherits the parent's title and replaces it after the first complete
+ *   answer in the fork, unless the parent's name was set by hand.
  * - /retitle regenerates the title from the current conversation.
  *
  * The naming model defaults to the first available entry of PREFERRED_MODELS
@@ -79,7 +80,7 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 		return retitleAfterFork && isAutoNamed(ctx);
 	}
 
-	async function generate(ctx: ExtensionContext, pendingPrompt?: string, force = false): Promise<Result> {
+	async function generate(ctx: ExtensionContext, force = false): Promise<Result> {
 		if (running) return { ok: false, reason: "a title is already being generated" };
 		running = true;
 		try {
@@ -87,9 +88,6 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 			const autoBefore = isAutoNamed(ctx);
 
 			const messages = collectMessages(ctx);
-			if (pendingPrompt?.trim() && !(messages.at(-1)?.role === "user" && messages.at(-1)?.text === pendingPrompt)) {
-				messages.push({ role: "user", text: pendingPrompt });
-			}
 			const transcript = buildTranscript(messages);
 			if (!transcript) return { ok: false, reason: "no conversation yet" };
 
@@ -185,22 +183,21 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 		active = false;
 	});
 
-	// Title from the first prompt right away instead of after a long run.
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (event.messageType !== "user" || !needsTitle(ctx)) return;
-		void generate(ctx, event.prompt);
-	});
-
-	// Retry once the run is done, e.g. when the first prompt was just "hi".
-	pi.on("agent_settled", async (_event, ctx) => {
-		if (!needsTitle(ctx)) return;
+	// Wait for a complete answer, not an intermediate tool-calling message.
+	// Settled also fires after errors and cancellation; neither should name a session.
+	pi.on("agent_settled", async (event, ctx) => {
+		if (event.aborted || !needsTitle(ctx)) return;
+		const lastMessage = ctx.sessionManager.getBranch().findLast((entry) => entry.type === "message");
+		if (lastMessage?.type !== "message" || lastMessage.message.role !== "assistant") return;
+		const message = lastMessage.message;
+		if (message.stopReason !== "stop" || !textOf(message.content).trim()) return;
 		void generate(ctx);
 	});
 
 	pi.registerCommand("retitle", {
 		description: "Regenerate the short session title from the conversation",
 		handler: async (_args, ctx) => {
-			const result = await generate(ctx, undefined, true);
+			const result = await generate(ctx, true);
 			if (result.ok) ctx.ui.notify(`Session titled: ${result.title}`, "info");
 			else ctx.ui.notify(`No new title: ${result.reason}`, "warning");
 		},
