@@ -9,6 +9,7 @@ function harness(initialName?: string) {
 	const requests: any[] = [];
 	let name = initialName;
 	let nextTitle = "Session Titles";
+	let responseGate: Promise<void> | undefined;
 	const model = { provider: "test", id: "naming" };
 	const ctx = {
 		hasUI: true,
@@ -23,7 +24,11 @@ function harness(initialName?: string) {
 			hasConfiguredAuth: () => true,
 			streamSimple: async (_model: unknown, request: unknown) => {
 				requests.push(request);
-				return { result: async () => ({ stopReason: "stop", content: [{ type: "text", text: nextTitle }] }) };
+				const title = nextTitle;
+				return { result: async () => {
+					await responseGate;
+					return { stopReason: "stop", content: [{ type: "text", text: title }] };
+				} };
 			},
 		},
 		ui: { notify: () => {} },
@@ -39,6 +44,8 @@ function harness(initialName?: string) {
 	return {
 		branch, requests,
 		name: () => name,
+		rename: (value: string) => { name = value; },
+		delayResponse: (gate: Promise<void>) => { responseGate = gate; },
 		title: (value: string) => { nextTitle = value; },
 		message: (role: string, text: string, stopReason = "stop") => branch.push({
 			type: "message", message: { role, content: [{ type: "text", text }], stopReason },
@@ -140,4 +147,120 @@ test("replaces an inherited automatic fork title only after the answer", async (
 	h.message("assistant", "Answer to the new topic");
 	await h.emit("agent_settled", { aborted: false });
 	assert.equal(h.name(), "Session Titles");
+});
+
+const THREE_MINUTES = 180_000;
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+async function startLongRun(h: ReturnType<typeof harness>) {
+	await h.emit("session_start", { reason: "new" });
+	h.message("user", "Analyze the entire project");
+	await h.emit("before_agent_start", { messageType: "user", prompt: "Analyze the entire project" });
+}
+
+test("creates a provisional title after three minutes and refines it once", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const h = harness();
+	await startLongRun(h);
+	h.message("assistant", "Inspecting the project", "toolUse");
+	t.mock.timers.tick(THREE_MINUTES - 1);
+	await flush();
+	assert.equal(h.requests.length, 0);
+	t.mock.timers.tick(1);
+	await flush();
+	assert.equal(h.name(), "Session Titles");
+	assert.equal(h.branch.at(-1).data.provisional, true);
+	assert.match(h.requests[0].messages[0].content[0].text, /Inspecting the project/);
+	h.title("Project Analysis");
+	h.message("assistant", "Complete project analysis");
+	await h.emit("agent_settled", { aborted: false });
+	assert.equal(h.name(), "Project Analysis");
+	assert.equal(h.branch.at(-1).data.provisional, false);
+	await h.emit("agent_settled", { aborted: false });
+	t.mock.timers.tick(THREE_MINUTES * 10);
+	await flush();
+	assert.equal(h.requests.length, 2);
+});
+
+test("completion, cancellation, failure and shutdown clear the fallback timer", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	for (const outcome of ["complete", "abort", "error", "shutdown"]) {
+		const h = harness();
+		await startLongRun(h);
+		if (outcome === "shutdown") await h.emit("session_shutdown");
+		else {
+			h.message("assistant", "Answer", outcome === "error" ? "error" : "stop");
+			await h.emit("agent_settled", { aborted: outcome === "abort" });
+		}
+		t.mock.timers.tick(THREE_MINUTES);
+		await flush();
+		assert.equal(h.requests.length, outcome === "complete" ? 1 : 0, outcome);
+	}
+});
+
+test("manual names are protected before and after the fallback", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	for (const renameBeforeFallback of [true, false]) {
+		const h = harness();
+		await startLongRun(h);
+		if (renameBeforeFallback) h.rename("Manual Title");
+		t.mock.timers.tick(THREE_MINUTES);
+		await flush();
+		h.rename("Manual Title");
+		h.message("assistant", "Complete answer");
+		await h.emit("agent_settled", { aborted: false });
+		assert.equal(h.name(), "Manual Title");
+		assert.equal(h.requests.length, renameBeforeFallback ? 0 : 1);
+	}
+});
+
+test("completion waits for an in-flight fallback and then refines it", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	const h = harness();
+	let release!: () => void;
+	h.delayResponse(new Promise<void>((resolve) => { release = resolve; }));
+	await startLongRun(h);
+	t.mock.timers.tick(THREE_MINUTES);
+	await flush();
+	assert.equal(h.requests.length, 1);
+	h.title("Final Analysis");
+	h.message("assistant", "Complete answer");
+	const settled = h.emit("agent_settled", { aborted: false });
+	release();
+	await settled;
+	assert.equal(h.name(), "Final Analysis");
+	assert.equal(h.requests.length, 2);
+});
+
+test("late fallback results cannot rename an aborted, failed or replaced session", async (t) => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
+	for (const outcome of ["replace", "abort", "error"]) {
+		const h = harness();
+		let release!: () => void;
+		h.delayResponse(new Promise<void>((resolve) => { release = resolve; }));
+		await startLongRun(h);
+		t.mock.timers.tick(THREE_MINUTES);
+		await flush();
+		if (outcome === "replace") {
+			await h.emit("session_shutdown");
+			h.branch.length = 0;
+			await h.emit("session_start", { reason: "new" });
+		} else {
+			h.message("assistant", "Incomplete answer", outcome === "error" ? "error" : "aborted");
+			await h.emit("agent_settled", { aborted: outcome === "abort" });
+		}
+		release();
+		await flush();
+		assert.equal(h.name(), undefined);
+	}
+});
+
+test("a provisional title can still be refined after reload", async () => {
+	const h = harness("Provisional Title");
+	h.branch.push({ type: "custom", customType: "auto-session-name", data: { name: "Provisional Title", provisional: true } });
+	await h.emit("session_start", { reason: "reload" });
+	h.message("assistant", "Complete answer");
+	await h.emit("agent_settled", { aborted: false });
+	assert.equal(h.name(), "Session Titles");
+	assert.equal(h.branch.at(-1).data.provisional, false);
 });

@@ -9,7 +9,8 @@
  *
  * - A title is generated after the first complete agent answer, and retried
  *   after later answers if there is no identifiable topic yet.
- * - Aborted or failed runs do not trigger automatic naming.
+ * - Long runs get a provisional title after three minutes, refined on completion.
+ * - Aborted or failed runs cancel the timer and do not trigger final naming.
  * - Names you set yourself (/name) are never overwritten.
  * - /new starts unnamed and gets a fresh title; /resume keeps the stored one.
  * - /fork inherits the parent's title and replaces it after the first complete
@@ -41,6 +42,7 @@ const PREFERRED_MODELS: ReadonlyArray<readonly [provider: string, id: string]> =
 	["pi-claude-cli", "claude-haiku-4-5"],
 ];
 
+const FALLBACK_DELAY_MS = 3 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_TOKENS = 512;
 /** Failed requests (not "no topic yet") before automatic naming gives up; /retitle is not limited. */
@@ -58,6 +60,15 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 	let running = false;
 	let failures = 0;
 	let retitleAfterFork = false;
+	let provisionalTitle = false;
+	let generationEpoch = 0;
+	let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+	let fallbackRequest: Promise<Result> | undefined;
+
+	function clearFallback(): void {
+		if (fallbackTimer !== undefined) clearTimeout(fallbackTimer);
+		fallbackTimer = undefined;
+	}
 
 	function autoName(ctx: ExtensionContext): string | undefined {
 		let name: string | undefined;
@@ -77,11 +88,12 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 	function needsTitle(ctx: ExtensionContext): boolean {
 		if (!ctx.hasUI || running || failures >= MAX_AUTO_FAILURES) return false;
 		if (!pi.getSessionName()) return true;
-		return retitleAfterFork && isAutoNamed(ctx);
+		return (retitleAfterFork || provisionalTitle) && isAutoNamed(ctx);
 	}
 
-	async function generate(ctx: ExtensionContext, force = false): Promise<Result> {
+	async function generate(ctx: ExtensionContext, force = false, provisional = false): Promise<Result> {
 		if (running) return { ok: false, reason: "a title is already being generated" };
+		const epoch = generationEpoch;
 		running = true;
 		try {
 			const nameBefore = pi.getSessionName();
@@ -125,7 +137,7 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 			const response = await stream.result();
 
 			// The session may have been replaced (/new, /resume, quit) meanwhile.
-			if (!active) return { ok: false, reason: "session changed" };
+			if (!active || epoch !== generationEpoch) return { ok: false, reason: "session or run changed" };
 			if (response.stopReason === "error" || response.stopReason === "aborted") {
 				failures++;
 				return { ok: false, reason: response.errorMessage ?? `request ${response.stopReason}` };
@@ -144,14 +156,15 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 
 			failures = 0;
 			retitleAfterFork = false;
+			provisionalTitle = provisional;
 			if (title !== pi.getSessionName()) pi.setSessionName(title);
-			pi.appendEntry(ENTRY_TYPE, { name: title, model: `${model.provider}/${model.id}` });
+			pi.appendEntry(ENTRY_TYPE, { name: title, model: `${model.provider}/${model.id}`, provisional });
 			return { ok: true, title };
 		} catch (error) {
-			failures++;
+			if (epoch === generationEpoch) failures++;
 			return { ok: false, reason: error instanceof Error ? error.message : String(error) };
 		} finally {
-			running = false;
+			if (epoch === generationEpoch) running = false;
 		}
 	}
 
@@ -173,6 +186,14 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 	}
 
 	pi.on("session_start", async (event, ctx) => {
+		clearFallback();
+		generationEpoch++;
+		fallbackRequest = undefined;
+		const lastAutoEntry = ctx.sessionManager.getBranch().findLast(
+			(entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE,
+		);
+		provisionalTitle = lastAutoEntry?.type === "custom" &&
+			(lastAutoEntry.data as { provisional?: boolean } | undefined)?.provisional === true;
 		active = true;
 		failures = 0;
 		running = false;
@@ -180,17 +201,40 @@ export default function autoSessionName(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_shutdown", async () => {
+		clearFallback();
+		generationEpoch++;
 		active = false;
+		running = false;
+		fallbackRequest = undefined;
+	});
+
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (event.messageType !== "user" || !needsTitle(ctx) || provisionalTitle || fallbackTimer !== undefined) return;
+		fallbackTimer = setTimeout(() => {
+			fallbackTimer = undefined;
+			if (active && needsTitle(ctx)) fallbackRequest = generate(ctx, false, true);
+		}, FALLBACK_DELAY_MS);
+		fallbackTimer.unref();
 	});
 
 	// Wait for a complete answer, not an intermediate tool-calling message.
 	// Settled also fires after errors and cancellation; neither should name a session.
 	pi.on("agent_settled", async (event, ctx) => {
-		if (event.aborted || !needsTitle(ctx)) return;
+		clearFallback();
 		const lastMessage = ctx.sessionManager.getBranch().findLast((entry) => entry.type === "message");
-		if (lastMessage?.type !== "message" || lastMessage.message.role !== "assistant") return;
-		const message = lastMessage.message;
-		if (message.stopReason !== "stop" || !textOf(message.content).trim()) return;
+		const message = lastMessage?.type === "message" ? lastMessage.message : undefined;
+		if (event.aborted || message?.role !== "assistant" || message.stopReason !== "stop" || !textOf(message.content).trim()) {
+			generationEpoch++;
+			running = false;
+			fallbackRequest = undefined;
+			return;
+		}
+		const epoch = generationEpoch;
+		// If completion races the fallback request, refine only after it has finished.
+		await fallbackRequest;
+		if (!active || epoch !== generationEpoch) return;
+		fallbackRequest = undefined;
+		if (!needsTitle(ctx)) return;
 		void generate(ctx);
 	});
 
