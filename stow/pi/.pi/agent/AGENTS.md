@@ -11,6 +11,6 @@
 
 # Orchestration / subagents
 
-- Keep state in files (e.g. `TASKS.md`), not in context.
+- Keep state in files (e.g. `TASKS.md`), not in context, and always outside the repository/worktree: `~/.cache/agent-tasks/<repo>/<task>/`. Never commit them.
 - Run each task in its own worker with a fresh context.
-- Worker reply max. 10 lines: status, branch/PR, open issues. Details go to `reports/<task>.md`.
+- Worker reply max. 10 lines: status, branch/PR, open issues. Details go to `~/.cache/agent-tasks/<repo>/<task>/report.md`, never into the repository.
