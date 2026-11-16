@@ -34,15 +34,15 @@ done; wait
 
 | Lens | Model (default) | Template |
 |---|---|---|
-| Judgment | `pi-claude-cli/claude-opus-5-5:high` | `references/judgment-reviewer.md` |
+| Judgment | `pi-claude-cli/claude-opus-5-5:medium` | `references/judgment-reviewer.md` |
 | Tooling | `openai/gpt-6.1-sol:medium` | `references/tooling-reviewer.md` |
-| Divergent | `openai/gpt-6.1-sol:high` | `references/divergent-reviewer.md` |
+| Divergent | `openai/gpt-6.1-sol:medium` | `references/divergent-reviewer.md` |
 
-The other family for two lenses gives real divergence and spreads usage limits. If a model is unavailable or limited, use the other family and say so; pick only IDs from `pi --list-models`, never invent one. An empty or failed output: rerun that lens once, else continue with two and say so.
+The other family for two lenses gives real divergence and spreads usage limits. All at medium reasoning; never xhigh. If a model is unavailable or limited, use the other family and say so; pick only IDs from `pi --list-models`, never invent one. An empty or failed output: rerun that lens once, else continue with two and say so.
 
 ## 3. Synthesize
 
-Fill `references/synthesizer.md` with each reviewer's full output where marked, write it to `<work>/synth.prompt.md`, run one `pi -p --no-session --model pi-claude-cli/claude-opus-5-5:high --tools read,bash` the same way into `<work>/synth.out.md`. It returns an Accepted / Rejected / Backlog list.
+Fill `references/synthesizer.md` with each reviewer's full output where marked, write it to `<work>/synth.prompt.md`, run one `pi -p --no-session --model pi-claude-cli/claude-opus-5-5:medium --tools read,bash` the same way into `<work>/synth.out.md`. It returns an Accepted / Rejected / Backlog list.
 
 ## 4. Structural enforcement check
 

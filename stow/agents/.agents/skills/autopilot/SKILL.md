@@ -38,6 +38,26 @@ Light path:
 - Trail rows only for `start`, `size`, assumptions, verdicts, the end, so `/skill:recap` still works.
 - **Escalate** when it grows (second area or PR needed, a risk from the list above appears): the owner stops and reports, you switch to the full path from §1, log a `size` row why.
 
+## Models
+
+Claude builds, GPT checks, so both subscriptions share the load and every verdict comes from the other family. Always pass the model at start: `herdr agent start <name> --kind pi --pane <id> -- --model <id>` (or `pi -p --model <id>`). Use only these IDs or ones from `pi --list-models`; never invent one.
+
+| Role | Model | Fallback on limit |
+|---|---|---|
+| Owner, full path | `pi-claude-cli/claude-opus-5-5:medium` | `openai/gpt-6.1-sol:medium` |
+| Owner, light path | `pi-claude-cli/claude-sonnet-5-5:medium` | `openai/gpt-6.1-sol:medium` |
+| Mechanical scans (e.g. deslop areas) | `pi-claude-cli/claude-sonnet-5-5:low` | `openai/gpt-6.1-sol:low` |
+| Verifier | `openai/gpt-6.1-sol:high` | `pi-claude-cli/claude-opus-5-5:high` |
+| Design sketch (2–3 options) | `openai/gpt-6.1-sol:medium` | `pi-claude-cli/claude-opus-5-5:medium` |
+| Attention review | the family the root is not on (`$PI_PROVIDER`), its strongest model at `:medium` | the other family |
+
+Reasoning: medium is the default; more thinking tends to over-engineer and burns limits. Only the verifier runs at high, because finding bugs pays for depth and its proof rule (FAIL only for demonstrable issues) keeps over-thinking from blocking. Never xhigh. Lower to low only for mechanical work.
+
+- The verifier is always the other family than that unit's owner; if the owner ran on its fallback, swap the verifier too.
+- Limit hit (agent reports it, or auto-resume shows a wait): the running agent waits it out via auto-resume; new agents of that role start on the fallback until the limit resets. Log a `model` row (role, from, to, why).
+- Both families limited: pause safely (§0) with the reset times in `resume.md`.
+- Root: the model the operator started; not switched. `report.md` lists which model filled each role.
+
 ## 1. Frame (skip parts the user already gave)
 
 Ground first (read the repo's AGENTS.md/README, count the work), then write `PLAN.md`:
@@ -65,9 +85,9 @@ Add to `PLAN.md` an ordered unit list. Each unit = one narrow, independently lan
 
 ## 3. Run the loop (per unit)
 
-1. **Spawn the owner.** Fresh `pi` in its own herdr pane (`../herdr/SKILL.md`), in a fresh worktree (`../worktrees/SKILL.md` for `.bare` repos) on the base from `references/merge-rules.md`. Prompt: path to `references/pr-owner.md`, the unit line, Done means, out of scope, permissions, base branch, task folder. Record it in `agents.tsv` (name, pane, unit, branch, started, stuck-after minutes from past units of its kind, default 90).
+1. **Spawn the owner.** Fresh `pi` on the owner model (§Models) in its own herdr pane (`../herdr/SKILL.md`), in a fresh worktree (`../worktrees/SKILL.md` for `.bare` repos) on the base from `references/merge-rules.md`. Prompt: path to `references/pr-owner.md`, the unit line, Done means, out of scope, permissions, base branch, task folder. Record it in `agents.tsv` (name, pane, unit, branch, started, stuck-after minutes from past units of its kind, default 90).
 2. **Code-ready.** The owner builds, proves the change on the real artifact, runs the deslop pass, opens the PR (ready, not draft), and reports the code-ready head SHA.
-3. **Verify.** Spawn a **fresh** verifier (prefer a different model family than the owner, if it has capacity) with `references/verifier.md`, unit, acceptance, PR, exact head SHA, base. Verdict: `PASS`, `PASS+NOTES` or `FAIL` with every provable issue. Drop a verdict that does not name the SHA and what it ran; respawn once, then record a gap. A gap is not a pass.
+3. **Verify.** Spawn a **fresh** verifier on the verifier model (§Models, other family than the owner) with `references/verifier.md`, unit, acceptance, PR, exact head SHA, base. Verdict: `PASS`, `PASS+NOTES` or `FAIL` with every provable issue. Drop a verdict that does not name the SHA and what it ran; respawn once, then record a gap. A gap is not a pass.
 4. **Fix rounds.** `FAIL`: send all issues to the owner, it fixes, redoes the deslop pass on changed lines, reports the new head. Re-verify per `references/merge-rules.md` (one fresh verifier; wording-only change: none). Max 3 rounds, then shrink or discard the unit and log why.
 5. **Land** per `references/merge-rules.md`: merge only with permission and only a verdict covering the head that lands; otherwise stop at verified.
 6. **Trail row** (see §5) and `resume.md` update after every unit outcome. Close finished panes.
@@ -76,7 +96,7 @@ Loop discipline: every unit is an experiment. State the hypothesis, make the sma
 
 ## 4. Root duties while it runs
 
-- **Wake on events, not timers.** Block on `herdr agent wait`/`--wait`, `gh pr checks --watch`, `gh run watch`, always under `timeout`. Never `sleep`-poll. Usage limits: auto-resume waits them out; owners on an exhausted model switch to the other family, never invented model IDs.
+- **Wake on events, not timers.** Block on `herdr agent wait`/`--wait`, `gh pr checks --watch`, `gh run watch`, always under `timeout`. Never `sleep`-poll. Usage limits: per §Models.
 - **Audit roughly hourly or on every wake:** check each agent by side effects (new commits, pushes, trail rows, pane output via `herdr agent read --lines 40`), not by its status text. Stuck = errors, cannot start turns, or nothing new past its stuck-after time. Replace a stuck agent at once (new pane, same brief, pointing at its branch and `units/` report). An agent waiting on a question is not stuck: answer it.
 - **Fix drift:** unreported heads, unrecorded agents, missing trail rows: have the owner record them.
 - **Countersign gate loosening:** anything that weakens a check (raised budget, allowlist entry, skipped/soft-failed test, disabled lint) needs verifier proof and your explicit countersign row in the trail. A disabled or soft-failed check always comes back out. Never bypass branch protection or forge-enforced approvals.

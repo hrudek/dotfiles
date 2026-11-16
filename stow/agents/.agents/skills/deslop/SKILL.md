@@ -15,7 +15,7 @@ Subtract, do not add. The product behaves exactly the same afterwards; the code 
 - `/skill:deslop <path> autopilot` (or the user is away): scan, write the plan, then run it per `../autopilot/SKILL.md` with that plan. Permissions come from the request (default: PRs, no merge).
 - `/skill:deslop <path> scan`: findings only, no changes.
 
-Task folder: `~/.cache/agent-tasks/<repo>/deslop-<area>/` (outside the repo). Large repos: delegate the scan per area to fresh `pi` workers (`../herdr/SKILL.md`), each writing `findings-<area>.md`; read only their summaries.
+Task folder: `~/.cache/agent-tasks/<repo>/deslop-<area>/` (outside the repo). Large repos: delegate the scan per area to fresh `pi` workers (`../herdr/SKILL.md`, model per the mechanical-scans row in `../autopilot/SKILL.md` §Models), each writing `findings-<area>.md`; read only their summaries.
 
 ## 1. Baseline
 

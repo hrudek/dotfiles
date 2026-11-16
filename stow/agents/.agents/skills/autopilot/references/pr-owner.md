@@ -31,11 +31,12 @@ Run the deslop pass from `../../deslop/references/rules.md` (relative to this fi
   - `## Blast Radius`: who/what it touches and why that is safe or risky.
   - `## Verification`: 1–3 bullets, each a real run and its outcome; perf as `before → after` with unit.
 - Stacked unit: `gh pr create --base <parent-branch>`.
+- Repo rules win over this brief: read its AGENTS.md/CI docs for PR rules (branch prefix, labels, required bot review). If the repo auto-merges green PRs, open with its opt-out (e.g. a `no-auto-merge` label) unless the root has cleared this unit to land; nothing may merge before the root's verdict.
 - Then rebase onto the current base and report **code-ready** to the root: head SHA, PR #, checks run with results, max 10 lines.
 
 ## 5. Babysit to green
 
-Order: conflicts, then review threads, then CI. Batch fixes into one push. Answer review threads (fix or reply with reason). A conflict on a stack you do not own: report, do not resolve. Wait with `gh pr checks <pr> --watch` under `timeout`, never `sleep`. Report every new head to the root. When verified, green and threads resolved, report **merge-ready**.
+Order: conflicts, then review threads, then CI. Batch fixes into one push. Answer review threads (fix or reply with reason). Bot reviews: a **required** bot check is a gate like CI; follow the repo's rule for it (e.g. fix every finding, re-run once on no result). A non-required bot follows the verifier's proof rule: fix only demonstrable issues, otherwise reply with the reason. Either way a bot approval is never a verdict. Every push restarts per-commit bot reviews, so batch fixes. A conflict on a stack you do not own: report, do not resolve. Wait with `gh pr checks <pr> --watch` under `timeout`, never `sleep`. Report every new head to the root. When verified, green and threads resolved, report **merge-ready**.
 
 ## 6. Fix rounds
 

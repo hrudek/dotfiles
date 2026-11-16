@@ -7,6 +7,7 @@ For humans only; no skill references this file. Source: github.com/cursor/plugin
 | Here | pstack | Simplified |
 |---|---|---|
 | `autopilot/SKILL.md` §0 pickup/pause | playbooks `session-pickup`, `pause-safely` | merged into one section |
+| `autopilot/SKILL.md` §Models | `setup-pstack` / `pstack-models.mdc` role lines | fixed table in the skill: Claude builds, GPT verifies, medium reasoning (verifier high, never xhigh), fallback to the other family on limits |
 | `autopilot/SKILL.md` §1 Frame, §2 Design | skill `figure-it-out` (Frame, Design the workflow) | no `architect`/`arena`; one owner sketches 2–3 options for one-way doors |
 | `autopilot/SKILL.md` §3 loop, §4 root duties | playbooks `autopilot-full`, `autonomous-run` | no `/loop 1h`: audit on every wake; max 2 owners in parallel; herdr panes instead of cloud agents |
 | `autopilot/SKILL.md` §5 trail | skill `show-me-your-work` | same TSV columns |
