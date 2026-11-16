@@ -16,7 +16,7 @@ Examples of the pattern:
 - User describes a flaky test the agent could have queried via an observability MCP. Routing: the debugging skill should mention the observability MCP.
 - User links a chat thread the agent could have fetched via a chat MCP. Routing: the relevant skill should mention the chat MCP.
 
-Read the transcript digest at <DIGEST_PATH>. Each entry carries its id in brackets; the digest shortens thinking, tool calls and tool results. When a cut part matters, read that entry from the raw session file <SESSION_PATH> (`jq -c 'select(.id=="<id>")' <SESSION_PATH>`), never the whole file. Autopilot task folder, if given: <TASK_FOLDER> (`PLAN.md`, `decisions.tsv`, `units/*.md`).
+Read the transcript digest at <DIGEST_PATH>. Each entry carries its id in brackets; the digest shortens thinking, tool calls and tool results. When a cut part matters, read that entry from the raw session file(s) <SESSION_PATH> (`jq -c 'select(.id=="<id>")' <SESSION_PATH>`), never the whole file. Autopilot task folder, if given: <TASK_FOLDER> (`PLAN.md`, `decisions.tsv`, `units/*.md`, `report.md` with its `## Usage` tables; look for wasted tokens, limit hits, errors, needless rounds).
 
 Scan for:
 - Tool invocations and command flags the agent had to discover

@@ -1,6 +1,6 @@
 ---
 name: reflect
-description: Spawn three parallel review subagents over the active pi session, surface durable learnings, and route each to a concrete edit on an existing skill. Nothing is applied without the user's approval. Use for /skill:reflect or when the user says reflect.
+description: Spawn three parallel review subagents over the active pi session or a whole autopilot run, surface durable learnings, and route each to a concrete edit on an existing skill. Nothing is applied without the user's approval. Use for /skill:reflect or when the user says reflect.
 disable-model-invocation: true
 ---
 
@@ -20,7 +20,17 @@ Work folder: `~/.cache/agent-tasks/reflect/<session-id>/` (outside every repo). 
 scripts/digest.sh "$PI_SESSION_FILE" > <work>/digest.md   # relative to this skill's folder
 ```
 
-The digest keeps user and assistant text, shortens thinking, tool calls and results, and tags each entry with its id. If the user passed an autopilot task folder, reviewers may also read its `PLAN.md`, `decisions.tsv` and `units/*.md`.
+The digest keeps user and assistant text, shortens thinking, tool calls and results, and tags each entry with its id.
+
+**Run mode** (`/skill:reflect <task-folder>` with a `sessions/` folder): review the run instead of this chat. Work folder `<task>/reflect/`; `<SESSION_PATH>` is `<task>/sessions/*.jsonl`; `<TASK_FOLDER>` is the task folder. Build one digest, usage first, then each session under its own heading:
+
+```bash
+since=$(awk -F'\t' 'NR==2{print $1; exit}' <task>/decisions.tsv)
+{ ../autopilot/scripts/usage.sh <task>; for f in <task>/sessions/*.jsonl; do
+    echo; scripts/digest.sh "$f" 200 "$since"; done; } > <work>/digest.md
+```
+
+Over ~400 KB: digest the non-owner sessions with tool results at 100 chars and say so. Reviewers read the run, not the chat that started it; skill changes still go only to skills actually used (autopilot, its references, deslop).
 
 ## 2. Spawn three reviewers in parallel
 
