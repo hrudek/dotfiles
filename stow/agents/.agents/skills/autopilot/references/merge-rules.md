@@ -1,8 +1,6 @@
 # Merge rules: rebase, stack, verdicts
 
-Forge: `gh`. A verdict covers one patch; green CI covers one head. Green CI or a bot approval is never a verdict. A required bot review counts as a check, not as a verdict.
-
-Repo auto-merge (merges on green checks): it must not land a unit before the verdict. Keep its opt-out (label/draft per the repo) on until the verdict covers the head; with merge permission then merge yourself per below, since removing a label does not re-trigger the auto-merge.
+Forge: `gh`. A verdict covers one patch; green CI covers one head. Green CI or a bot approval is never a verdict.
 
 ## Where a unit's branch starts
 
