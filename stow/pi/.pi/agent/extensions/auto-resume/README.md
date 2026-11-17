@@ -69,15 +69,7 @@ Paid extra usage already enabled at the provider is **not** switched off by this
 If you want to use only the subscription, disable it at the provider; Auto-Resume
 only acts once a request has actually failed because of a usage limit.
 
-## Files and tests
+## Files
 
 - `index.ts`: lifecycle, countdown, cancellation, commands and usage adapters.
 - `limits.ts`: error detection and wait-time calculation, no Pi dependency.
-- `tests/pi-auto-resume.test.mjs` in the repository: offline tests with simulated
-  usage data and virtual time, without model requests or consumed tokens.
-
-Run from the repository root with Node.js 22.19+ (TypeScript stripping):
-
-```sh
-node --test tests/pi-auto-resume.test.mjs
-```

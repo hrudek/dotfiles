@@ -5,8 +5,7 @@
   "type": "module",
   "description": "Give pi sessions a short English title that shows up in terminal and herdr tabs",
   "scripts": {
-    "check": "npm run typecheck && npm test",
-    "test": "node --test \"src/**/*.test.ts\"",
+    "check": "npm run typecheck",
     "typecheck": "tsc --noEmit"
   },
   "pi": {

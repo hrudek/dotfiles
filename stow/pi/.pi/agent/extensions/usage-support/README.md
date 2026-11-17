@@ -67,15 +67,3 @@ applies instead.
 
 While Auto-Resume is waiting, its countdown is shown exclusively in the footer and
 all usage indicators are hidden (see `usage-status.ts`).
-
-## Tests
-
-From the repository root:
-
-```sh
-node --test tests/pi-auto-resume.test.mjs tests/pi-usage.test.mjs
-```
-
-The tests cover virtual time, polling, backoff, reset times, preserved display on
-errors, cache isolation, file locks and two real concurrent operating-system
-processes. No real model requests are made.

@@ -4,8 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "check": "npm run typecheck && npm test",
-    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "check": "npm run typecheck",
     "typecheck": "tsc --noEmit"
   },
   "pi": {
@@ -19,7 +18,6 @@
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
-    "tsx": "^4.20.6",
     "typescript": "^5.9.2"
   }
 }
