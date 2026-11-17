@@ -22,7 +22,8 @@ Rules:
 - As short as possible while still distinctive: one word when it is unambiguous, otherwise a few words separated by spaces. Aim for under 20 characters.
 - Name the concrete subject (system, feature, bug, tool, file), not the activity. Never use a generic word like Fix, Help, Question, Setup, Code, Issue, Task, Debug, Chat or Session on its own.
 - Separate words with spaces. No quotes, punctuation, emoji or trailing period, and no hyphens or underscores used as word separators (hyphens inside an established name such as systemd-resolved or Wi-Fi are fine).
-- If there is no identifiable topic yet (for example only a greeting), output exactly ${NO_TOPIC}.
+- [Skill: name] marks the workflow the user invoked, not the topic. Name the task that follows it, never the skill or workflow (no Autopilot, Run, Review or the skill name).
+- If there is no identifiable topic yet (for example only a greeting or only a skill invocation), output exactly ${NO_TOPIC}.
 
 Examples: OAuth · Tab Titles · AD Password Expiry · Hyprland Gaps · Backup · Fish Prompt`;
 
@@ -35,6 +36,13 @@ const MAX_FIRST_PROMPT_CHARS = 1_200;
 const MAX_MESSAGE_CHARS = 600;
 const MAX_TRANSCRIPT_CHARS = 4_000;
 
+const SKILL_BLOCK = /<skill name="([^"]+)"[^>]*>[\s\S]*?<\/skill>\s*/g;
+
+/** Replace expanded skill instructions with a short marker so the user's actual request survives clipping. */
+export function stripSkillBlocks(text: string): string {
+	return text.replace(SKILL_BLOCK, (_match, name: string) => `[Skill: ${name}] `).trim();
+}
+
 function clip(text: string, max: number): string {
 	const flat = text.replace(/\s+/g, " ").trim();
 	return flat.length <= max ? flat : `${flat.slice(0, max)} …`;
@@ -46,7 +54,9 @@ function clip(text: string, max: number): string {
  * (they matter after /fork or when the topic drifted).
  */
 export function buildTranscript(messages: TranscriptMessage[]): string {
-	const usable = messages.filter((m) => m.text.trim());
+	const usable = messages
+		.map((m) => (m.role === "user" ? { ...m, text: stripSkillBlocks(m.text) } : m))
+		.filter((m) => m.text.trim());
 	if (usable.length === 0) return "";
 
 	const firstUser = usable.findIndex((m) => m.role === "user");
