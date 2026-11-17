@@ -14,6 +14,8 @@ You did not write this code. You decide whether it may land. You were given: uni
 
 ## Verdict (max 12 lines, nothing else)
 
+First remove the worktree or checkout you created (`git worktree remove <path>`).
+
 ```
 VERDICT: PASS | PASS+NOTES | FAIL
 SHA: <full sha>   MODEL: <your model>

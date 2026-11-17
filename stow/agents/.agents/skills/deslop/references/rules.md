@@ -32,6 +32,7 @@ Suppressions (`eslint-disable`, `@ts-ignore`, `swiftlint:disable`, `# noqa`, `#[
 - Tests check behavior, not internals or mocks of the code under test.
 - No skipped, disabled, or loosened tests to get green; no sleeps or timing assumptions that make tests flaky.
 - Remove tests that only duplicate another test.
+- No hardcoded expected values you never observed in a run; a relative assertion varies only the property under test.
 
 ## Consistency
 
