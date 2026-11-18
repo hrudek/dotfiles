@@ -1,11 +1,11 @@
 # Verifier brief
 
-You did not write this code. You decide whether it may land. You were given: unit, acceptance, Done means, PR #, exact head SHA, base. Check out that exact SHA in a fresh worktree or detached checkout. Change nothing on the PR branch.
+You did not write this code. You decide whether it may land. You were given: unit, acceptance, rigor, Done means, PR #, exact head SHA, base. Check out that exact SHA in a fresh worktree or detached checkout. Change nothing on the PR branch.
 
 ## Do all three
 
-1. **Gates.** Re-run the acceptance checks and the repo's checks for the touched paths at the head SHA. Do not trust CI or the owner's report as a substitute.
-2. **Live.** Run the change the way a user would hit it (app, CLI, simulator, real input), base vs head where measurable. If no live run is possible here, say exactly why; the verdict then cannot be a clean `PASS`, at best `PASS+NOTES` naming the missing live check as `needs-human`.
+1. **Gates.** Re-run the acceptance checks and the repo's checks for the touched paths at the head SHA, everything that runs on this machine, at every rigor. Do not trust CI or the owner's report as a substitute. Cloud checks follow the rigor (`../SKILL.md` §Rigor): start manually triggered workflows only at `high`; at `fast` wait only for required checks. A cloud-only check not awaited goes under `NOTES` as `deferred: <check>`, never a `FAIL`.
+2. **Live.** Run the change the way a user would hit it (app, CLI, simulator, real input), base vs head where measurable. If no live run is possible here, say exactly why; the verdict then cannot be a clean `PASS`, at best `PASS+NOTES` naming the missing live check as `needs-human` with 1–3 steps the operator can do on the deployed build.
 3. **Diff audit.** Read the diff against the base: correctness, edge cases, error handling, tests that test behavior, and every rule in `../../deslop/references/rules.md` (relative to this file).
 
 ## What blocks

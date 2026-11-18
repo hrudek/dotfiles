@@ -69,6 +69,23 @@ Reasoning: medium is the default; more thinking tends to over-engineer and burns
 - Both families limited: pause safely (§0) with the reset times in `resume.md`.
 - Root: the model the operator started; not switched. `report.md` lists which model filled each role.
 
+## Rigor
+
+One level per run, in `PLAN.md`. Source, first match wins: the brief ("fast", "schnell", "live testen" → `fast`; "gründlich", "sicher", "careful" → `high`), a merge or testing policy in the repo's AGENTS.md/README (e.g. "merge to main quickly to test live" → `fast`), else `normal`. Log it with phase `rigor`, naming the source.
+
+Rigor only changes cloud CI: what is waited for and what is started. Local checks and live runs (owner proof, verifier gates and live run) are never reduced at any level: whatever can run on this machine runs.
+
+| | `fast` | `normal` | `high` |
+|---|---|---|---|
+| PR checks to wait for before merge | required only | all that start automatically | all that start automatically |
+| Manually triggered workflows (`workflow_dispatch`, e.g. simulator or device runs) | never | never | yes, when they cover the touched paths |
+| Base CI after merge | checked on each wake, next unit goes on | wait (`gh run watch`) | wait |
+
+- A unit with a one-way door (data migration, stored data or format change, public API) runs at `high` whatever the run's level. Log a `rigor` row.
+- `fast` grants merge permission only when its source asks for quick merges; otherwise it only drops the waits.
+- `fast`, base CI: on each wake read `gh run list --branch <base> --json headSha,conclusion --limit 5`. Red: the fix is the next unit, highest priority, and at most one more unit lands on a red base. If the fix does not pass its first round, revert the culprit (a clean `git revert` PR needs no verifier), re-plan its unit, log both.
+- `fast`, handing over: the repo's own deploy of the base (e.g. a beta or store build) is the operator's signal; add no notification tools. Every merged PR with `needs-human` items goes into `report.md` under `## Ready to test` (PR, test steps, merged at), updated after each merge.
+
 ## 1. Frame (skip parts the user already gave)
 
 Ground first (read the repo's AGENTS.md/README, count the work), then write `PLAN.md`:
@@ -78,7 +95,7 @@ Goal: <one sentence>
 Done means: <falsifiable predicate: commands, tests, merged PRs, metric thresholds; "old vs new" where measurable>
 Out of scope: <list>
 Permissions: <from the brief. Default: worktrees, branches, PRs. Merge only if the brief says so>
-Rigor: <low/normal/high and why: one-way doors and big blast radius get more gates>
+Rigor: <fast/normal/high, its source, and why (§Rigor)>
 Scope: <rough units and effort, blockers found while grounding>
 Assumptions: <decisions made instead of asking>
 ```
@@ -96,9 +113,9 @@ Add to `PLAN.md` an ordered unit list. Each unit = one narrow, independently lan
 
 ## 3. Run the loop (per unit)
 
-1. **Spawn the owner.** Fresh `pi` on the owner model (§Models) in its own herdr pane as `owner-<n>` (§Agents), in a fresh worktree (`../worktrees/SKILL.md` for `.bare` repos) on the base from `references/merge-rules.md`. Prompt: path to `references/pr-owner.md`, the unit line, Done means, out of scope, permissions, base branch, task folder. Record it in `agents.tsv` (name, pane, unit, branch, started, stuck-after minutes from past units of its kind, default 90).
+1. **Spawn the owner.** Fresh `pi` on the owner model (§Models) in its own herdr pane as `owner-<n>` (§Agents), in a fresh worktree (`../worktrees/SKILL.md` for `.bare` repos) on the base from `references/merge-rules.md`. Prompt: path to `references/pr-owner.md`, the unit line, the unit's rigor, Done means, out of scope, permissions, base branch, task folder. Record it in `agents.tsv` (name, pane, unit, branch, started, stuck-after minutes from past units of its kind, default 90).
 2. **Code-ready.** The owner builds, proves the change on the real artifact, runs the deslop pass, opens the PR (ready, not draft), and reports the code-ready head SHA.
-3. **Verify.** Run a **fresh** headless verifier `verifier-<n>-r<round>` (§Agents) on the verifier model (§Models, other family than the owner) with `references/verifier.md`, unit, acceptance, PR, exact head SHA, base. Verdict: `PASS`, `PASS+NOTES` or `FAIL` with every provable issue. Drop a verdict that does not name the SHA and what it ran; respawn once, then record a gap. A gap is not a pass.
+3. **Verify.** Run a **fresh** headless verifier `verifier-<n>-r<round>` (§Agents) on the verifier model (§Models, other family than the owner) with `references/verifier.md`, unit, acceptance, rigor, PR, exact head SHA, base. Verdict: `PASS`, `PASS+NOTES` or `FAIL` with every provable issue. Drop a verdict that does not name the SHA and what it ran; respawn once, then record a gap. A gap is not a pass.
 4. **Fix rounds.** `FAIL`: send all issues to the owner, it fixes, redoes the deslop pass on changed lines, reports the new head. Re-verify per `references/merge-rules.md` (one fresh verifier; wording-only change: none). Max 3 rounds, then shrink or discard the unit and log why.
 5. **Land** per `references/merge-rules.md`: merge only with permission and only a verdict covering the head that lands; otherwise stop at verified.
 6. **Trail row** (see §5) and `resume.md` update after every unit outcome. Close finished panes.
@@ -107,7 +124,7 @@ Loop discipline: every unit is an experiment. State the hypothesis, make the sma
 
 ## 4. Root duties while it runs
 
-- **Wake on events, not timers.** Prompt owners with `herdr agent prompt <owner> "…" --wait --timeout <ms>`, no `--until` (the defaults include `done`; a hand-written list missed it and idled 85 min). Block on `gh pr checks --watch`, `gh run watch`, always under `timeout`. Never `sleep`-poll. Usage limits: per §Models.
+- **Wake on events, not timers.** Prompt owners with `herdr agent prompt <owner> "…" --wait --timeout <ms>`, no `--until` (the defaults include `done`; a hand-written list missed it and idled 85 min). Block on `gh pr checks --watch`, `gh run watch` only where §Rigor waits for CI, always under `timeout`. Never `sleep`-poll. Usage limits: per §Models.
 - **Audit roughly hourly or on every wake:** check each agent by side effects (new commits, pushes, trail rows, pane output via `herdr agent read --lines 40`), not by its status text. Stuck = errors, cannot start turns, or nothing new past its stuck-after time. Replace a stuck owner at once (new pane as `owner-<n>-b`, same brief, pointing at its branch and `units/` report). An agent waiting on a question is not stuck: answer it.
 - **Fix drift:** unreported heads, unrecorded agents, missing trail rows: have the owner record them.
 - **Countersign gate loosening:** anything that weakens a check (raised budget, allowlist entry, skipped/soft-failed test, disabled lint) needs verifier proof and your explicit countersign row in the trail. A disabled or soft-failed check always comes back out. Never bypass branch protection or forge-enforced approvals.
@@ -130,4 +147,4 @@ Loop discipline: every unit is an experiment. State the hypothesis, make the sma
 2. **Trail audit:** check this run's rows: each maps to a real action, each evidence pointer resolves (`git cat-file -e`, `gh pr view`). Add superseding rows for wrong ones and rows for unlogged forks or pivots.
 3. **Attention review:** one fresh headless agent `attention` (§Agents) on a different model family than the root. It reads `PLAN.md`, `decisions.tsv`, `units/*.md` (bounded) and the PR list, not transcripts, and lists: decisions with weak or no evidence, verification claimed without proof, risky or scope-creeping choices, gaps a skim would miss. Its list goes into `report.md` under `## Attention`, headed `reviewed by <model>` ("No flags" is valid).
 4. Encode recurring corrections from this run as a check, lint rule or script in their own PR if cheap, otherwise list them in the report.
-5. `report.md`: first carry every factual correction from verifiers into it and the reply, not only the PR text. Then predicate state per check, PRs with verdict and state (merge order if unmerged), discarded work and why, checks actually run, what still needs a human, Attention. Append `scripts/usage.sh <task>` output (its `## Usage` tables). Reply in ≤10 lines and point to `/skill:recap` (catch-up) and `/skill:reflect <task>` (improve the skills from this run).
+5. `report.md`: first carry every factual correction from verifiers into it and the reply, not only the PR text. Then predicate state per check, PRs with verdict and state (merge order if unmerged), discarded work and why, checks actually run, cloud checks not awaited (§Rigor) and their later result, what still needs a human (`## Ready to test` at `fast`), Attention. Append `scripts/usage.sh <task>` output (its `## Usage` tables). Reply in ≤10 lines and point to `/skill:recap` (catch-up) and `/skill:reflect <task>` (improve the skills from this run).

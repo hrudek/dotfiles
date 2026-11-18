@@ -9,7 +9,7 @@ For humans only; no skill references this file. Source: github.com/cursor/plugin
 | `autopilot/SKILL.md` §0 pickup/pause | playbooks `session-pickup`, `pause-safely` | merged into one section |
 | `autopilot/SKILL.md` §Agents, `scripts/usage.sh` | cloud agents + agent ids in the store | owners in herdr panes (auto-resume), one-shot roles headless `pi -p`; every session saved under `<task>/sessions/` with a role name, usage table in `report.md` (own addition) |
 | `autopilot/SKILL.md` §Models | `setup-pstack` / `pstack-models.mdc` role lines | fixed table in the skill: Claude builds, GPT verifies, medium reasoning (verifier high, never xhigh), fallback to the other family on limits |
-| `autopilot/SKILL.md` §1 Frame, §2 Design | skill `figure-it-out` (Frame, Design the workflow) | no `architect`/`arena`; one owner sketches 2–3 options for one-way doors |
+| `autopilot/SKILL.md` §1 Frame, §2 Design | skill `figure-it-out` (Frame, Design the workflow) | no `architect`/`arena`; one owner sketches 2–3 options for one-way doors; §Rigor (`fast`/`normal`/`high`, only changes cloud CI waits and manual runs) is an own addition |
 | `autopilot/SKILL.md` §3 loop, §4 root duties | playbooks `autopilot-full`, `autonomous-run` | no `/loop 1h`: audit on every wake; max 2 owners in parallel; herdr panes instead of cloud agents |
 | `autopilot/SKILL.md` §5 trail | skill `show-me-your-work` | same TSV columns |
 | `autopilot/SKILL.md` §6 hand back | `autopilot-full` final verify + `show-me-your-work` audit and attention review | attention reviewer reads plan/trail/unit files, not transcripts |

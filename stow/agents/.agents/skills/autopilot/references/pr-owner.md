@@ -1,6 +1,6 @@
 # PR owner brief
 
-You own one unit from build to land. The root owns verdicts; you never land on your own judgment. You were given: unit, acceptance, Done means, out of scope, permissions, base branch, task folder.
+You own one unit from build to land. The root owns verdicts; you never land on your own judgment. You were given: unit, acceptance, rigor, Done means, out of scope, permissions, base branch, task folder. Rigor (`../SKILL.md` §Rigor) only changes which cloud CI you wait for or start; it never reduces local checks or live runs.
 
 ## Survive being replaced
 
@@ -14,7 +14,7 @@ Assume your session dies. Push your branch soon after starting and after each fi
 
 ## 2. Prove it works
 
-Run the acceptance checks and the repo's checks for the touched paths on the committed head. Show the behavior on the real artifact the way a user would hit it (run the app/CLI/test harness, compare base vs head where measurable). A green unit test alone is not proof of behavior.
+Run the acceptance checks and the repo's checks for the touched paths on the committed head. Show the behavior on the real artifact the way a user would hit it (run the app/CLI/test harness, compare base vs head where measurable). A green unit test alone is not proof of behavior. If this machine cannot run it (e.g. needs another OS or a device), say so in your report; do not start a manually triggered workflow as a substitute unless rigor is `high`.
 
 ## 3. Clean up
 
@@ -30,12 +30,13 @@ Run the deslop pass from `../../deslop/references/rules.md` (relative to this fi
   - `## Tradeoffs`: only rejected alternatives a reviewer would ask about.
   - `## Blast Radius`: who/what it touches and why that is safe or risky.
   - `## Verification`: 1–3 bullets, each a real run and its outcome; perf as `before → after` with unit.
+  - `## Test`: only when something needs a human (no live run possible here): 1–3 steps the operator does on the deployed build.
 - Stacked unit: `gh pr create --base <parent-branch>`.
 - Then rebase onto the current base and report **code-ready** to the root: head SHA, PR #, checks run with results, max 10 lines.
 
 ## 5. Babysit to green
 
-Order: conflicts, then review threads, then CI. Batch fixes into one push. Answer review threads (fix or reply with reason). A conflict on a stack you do not own: report, do not resolve. Wait with `gh pr checks <pr> --watch` under `timeout`, never `sleep`. Report every new head to the root. When verified, green and threads resolved, report **merge-ready**.
+Order: conflicts, then review threads, then CI. Batch fixes into one push. Answer review threads (fix or reply with reason). A conflict on a stack you do not own: report, do not resolve. Wait under `timeout`, never `sleep`, only for the checks the rigor names: `fast` `gh pr checks <pr> --required --watch` (none required: nothing to wait for), `normal`/`high` `gh pr checks <pr> --watch`. Start manually triggered workflows only at `high`. Report every new head to the root. When verified, green and threads resolved, report **merge-ready**.
 
 ## 6. Fix rounds
 
