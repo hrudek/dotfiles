@@ -46,12 +46,16 @@ if status is-interactive
             set -gx SSH_AUTH_SOCK "$HOME/.cache/ssh-agent/socket"
         end
 
-        command ssh-add -l >/dev/null 2>&1
-        if test $status -eq 2
-            mkdir -p (dirname "$SSH_AUTH_SOCK")
-            rm -f "$SSH_AUTH_SOCK"
-            eval (command ssh-agent -c -a "$SSH_AUTH_SOCK") >/dev/null
-        end
+        # Serialize the check and startup across concurrently opening shells.
+        # --close prevents the agent from inheriting and holding the lock.
+        mkdir -p (dirname "$SSH_AUTH_SOCK")
+        command flock --close "$SSH_AUTH_SOCK.lock" fish --no-config -c '
+            command ssh-add -l >/dev/null 2>&1
+            if test $status -eq 2
+                rm -f "$SSH_AUTH_SOCK"
+                command ssh-agent -c -a "$SSH_AUTH_SOCK"
+            end
+        ' | source >/dev/null
     end
 end
 
