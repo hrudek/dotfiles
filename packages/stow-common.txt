@@ -1,5 +1,6 @@
 # Stow packages linked on every platform unless it has its own selection.
 agents
+claude
 doom
 fish
 flameshot

@@ -1,5 +1,6 @@
 # Development dotfiles only. Omarchy continues to own the Wayland desktop.
 agents
+claude
 doom
 fish
 ghostty

@@ -1,0 +1,11 @@
+{
+  "theme": "custom:catppuccin-macchiato",
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/statusline.sh",
+    "refreshInterval": 60
+  },
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "1"
+  }
+}

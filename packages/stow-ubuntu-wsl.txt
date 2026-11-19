@@ -2,6 +2,7 @@
 # X11/desktop packages (i3, i3status, polybar, rofi, flameshot, ghostty) are
 # not linked.
 agents
+claude
 doom
 fish
 gitconfig

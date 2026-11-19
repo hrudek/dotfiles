@@ -1,0 +1,22 @@
+{
+  "$schema": "https://www.schemastore.org/claude-code-keybindings.json",
+  "$docs": "https://code.claude.com/docs/en/keybindings",
+  "bindings": [
+    {
+      "context": "Select",
+      "bindings": {
+        "ctrl+j": "select:next",
+        "ctrl+k": "select:previous"
+      }
+    },
+    {
+      "context": "Autocomplete",
+      "bindings": {
+        "ctrl+j": "autocomplete:next",
+        "ctrl+n": "autocomplete:next",
+        "ctrl+k": "autocomplete:previous",
+        "ctrl+p": "autocomplete:previous"
+      }
+    }
+  ]
+}

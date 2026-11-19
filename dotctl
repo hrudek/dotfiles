@@ -886,6 +886,7 @@ windows_dotfiles_layer() {
   copy_tree "$STOW_DIR/agents/.agents/skills" "$CLAUDE_SKILLS_DIR"
   copy_tree "$STOW_DIR/agents-work/.agents/skills" "$CLAUDE_SKILLS_DIR"
   copy_tree "$STOW_DIR/pi/.pi/agent" "$HOME/.pi/agent"
+  copy_tree "$STOW_DIR/claude/.claude" "$HOME/.claude"
   copy_tree "$STOW_DIR/herdr/.config/herdr" "$HOME/.config/herdr"
   copy_tree "$STOW_DIR/nvim/.config/nvim" "$local_appdata/nvim"
   run mkdir -p "$HOME/.claude" "$HOME/.codex" "$HOME/.copilot" "$HOME/.local/bin"
@@ -1089,6 +1090,31 @@ herdr_plugins_file() {
   fi
 }
 
+# Claude Code rewrites ~/.claude/settings.json itself (/config, Herdr hooks),
+# so the managed keys are merged into it instead of linking the file.
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+
+sync_claude() {
+  local managed="$REPO/packages/claude-settings.json" merged
+  info "Syncing Claude Code settings"
+  if ! command -v jq >/dev/null 2>&1; then
+    warn "jq is missing; skipping Claude Code settings"
+  elif $DRY_RUN; then
+    show_cmd jq -s '.[0] * .[1]' "$CLAUDE_SETTINGS" "$managed"
+  else
+    mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+    [[ -s "$CLAUDE_SETTINGS" ]] || printf '{}\n' > "$CLAUDE_SETTINGS"
+    merged="$(jq -s '.[0] * .[1]' "$CLAUDE_SETTINGS" "$managed")" || die "cannot merge $managed into $CLAUDE_SETTINGS"
+    printf '%s\n' "$merged" > "$CLAUDE_SETTINGS"
+  fi
+  info "Syncing Claude Code MCP servers"
+  if mise exec --cd "$(mise_workdir)" -- claude mcp get executor >/dev/null 2>&1; then
+    ok "MCP server executor is configured"
+  else
+    run mise exec --cd "$(mise_workdir)" -- claude mcp add --scope user --transport http executor https://mcp.executor.sh/mcp
+  fi
+}
+
 sync_integrations() {
   local source integration plugin_file workdir
   need mise
@@ -1111,6 +1137,7 @@ sync_integrations() {
   # `pi install` is idempotent: it updates an existing install and never
   # duplicates the entry in ~/.pi/agent/settings.json.
   while IFS= read -r source; do run mise exec --cd "$workdir" -- pi install "$source"; done < <(load_list "$REPO/packages/pi-packages.txt")
+  sync_claude
   if [[ "$(platform)" != windows ]]; then
     if command -v az >/dev/null 2>&1 || $DRY_RUN; then
       run mise run --cd "$REPO" azure:extensions
@@ -1300,7 +1327,7 @@ EOF
         check_fail "Windows gitbash launcher is missing"
       fi
       [[ -d "$HOME/.agents" ]] && check_ok "agent skills are copied" || check_fail "$HOME/.agents is missing"
-      [[ -d "$CLAUDE_SKILLS_DIR/committing" ]] && check_ok "agent skills are copied for Claude Code" || check_fail "agent skills are missing from $CLAUDE_SKILLS_DIR"
+      [[ -d "$CLAUDE_SKILLS_DIR/commit" ]] && check_ok "agent skills are copied for Claude Code" || check_fail "agent skills are missing from $CLAUDE_SKILLS_DIR"
       [[ -d "$HOME/.pi/agent" ]] && check_ok "Pi configuration is copied" || check_fail "$HOME/.pi/agent is missing"
       [[ -f "$HOME/.config/herdr/config.toml" ]] && check_ok "Herdr configuration is copied" || check_fail "$HOME/.config/herdr/config.toml is missing"
       if windows_has_wsl_distribution; then

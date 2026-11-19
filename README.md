@@ -287,6 +287,14 @@ writes to itself. `dotctl stow` therefore links each shared skill there
 individually (`~/.claude/skills/<name>` → `~/.agents/skills/<name>`) and removes
 links to skills that were deleted; native Windows gets copies instead.
 
+The rest of the Claude Code setup mirrors Pi. `stow/claude` links
+`CLAUDE.md` (imports the shared `~/.pi/agent/AGENTS.md`), `keybindings.json`,
+the Catppuccin Macchiato theme in `themes/` and `statusline.sh`, which shows
+Claude subscription usage. Claude Code rewrites `settings.json` itself, so
+`dotctl apply --only integrations` merges the managed keys from
+`packages/claude-settings.json` into it with `jq` (theme, status line,
+experimental Code Mode). It also adds the `executor` MCP server at user scope.
+
 Azure DevOps over HTTPS is not configured. In the rare case it is still needed
 from WSL, use Windows Git, which ships Git Credential Manager and signs in with
 the company SSO in the browser:
