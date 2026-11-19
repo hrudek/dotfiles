@@ -779,6 +779,42 @@ install_omarchy_shell_plugins() {
   run cp -a "$source/." "$target/"
 }
 
+# Claude Code reads skills only from ~/.claude/skills, which it also writes to
+# (synced/). Each shared skill is therefore linked (copied on Windows) into
+# that real directory instead of folding it onto ~/.agents/skills.
+CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
+
+agent_skill_names() {
+  local dir entry
+  for dir in "$STOW_DIR/agents/.agents/skills" "$STOW_DIR/agents-work/.agents/skills"; do
+    [[ -d "$dir" ]] || continue
+    for entry in "$dir"/*; do [[ -e "$entry" ]] && basename "$entry"; done
+  done | sort -u
+}
+
+link_claude_skills() {
+  local name target link
+  info "Linking agent skills for Claude Code"
+  run mkdir -p "$CLAUDE_SKILLS_DIR"
+  # Drop links to skills that no longer exist in the repository.
+  for link in "$CLAUDE_SKILLS_DIR"/*; do
+    [[ -L "$link" ]] || continue
+    [[ "$(readlink "$link")" == ../../.agents/skills/* ]] || continue
+    [[ -e "$link" ]] || run rm -f -- "$link"
+  done
+  while IFS= read -r name; do
+    link="$CLAUDE_SKILLS_DIR/$name"
+    target="../../.agents/skills/$name"
+    if [[ -L "$link" ]]; then
+      [[ "$(readlink "$link")" == "$target" ]] && continue
+      run rm -f -- "$link"
+    elif [[ -e "$link" ]]; then
+      die "$link exists and is not a link; move it away so dotctl can link the shared skill"
+    fi
+    run ln -s "$target" "$link"
+  done < <(agent_skill_names)
+}
+
 stow_layer() {
   local package
   local -a unstow=()
@@ -827,6 +863,7 @@ stow_layer() {
   # agents and agents-work together.
   stow -n -d "$STOW_DIR" -t "$HOME" -R agents-work
   run stow -d "$STOW_DIR" -t "$HOME" -R agents-work
+  link_claude_skills
   [[ "$(platform)" == omarchy ]] && install_omarchy_shell_plugins
   if $DRY_RUN; then ok "Dotfiles would be linked"; else ok "Dotfiles are linked"; fi
 }
@@ -846,6 +883,8 @@ windows_dotfiles_layer() {
   info "Copying shared configuration for native Windows"
   copy_tree "$STOW_DIR/agents/.agents" "$HOME/.agents"
   copy_tree "$STOW_DIR/agents-work/.agents" "$HOME/.agents"
+  copy_tree "$STOW_DIR/agents/.agents/skills" "$CLAUDE_SKILLS_DIR"
+  copy_tree "$STOW_DIR/agents-work/.agents/skills" "$CLAUDE_SKILLS_DIR"
   copy_tree "$STOW_DIR/pi/.pi/agent" "$HOME/.pi/agent"
   copy_tree "$STOW_DIR/herdr/.config/herdr" "$HOME/.config/herdr"
   copy_tree "$STOW_DIR/nvim/.config/nvim" "$local_appdata/nvim"
@@ -1261,6 +1300,7 @@ EOF
         check_fail "Windows gitbash launcher is missing"
       fi
       [[ -d "$HOME/.agents" ]] && check_ok "agent skills are copied" || check_fail "$HOME/.agents is missing"
+      [[ -d "$CLAUDE_SKILLS_DIR/committing" ]] && check_ok "agent skills are copied for Claude Code" || check_fail "agent skills are missing from $CLAUDE_SKILLS_DIR"
       [[ -d "$HOME/.pi/agent" ]] && check_ok "Pi configuration is copied" || check_fail "$HOME/.pi/agent is missing"
       [[ -f "$HOME/.config/herdr/config.toml" ]] && check_ok "Herdr configuration is copied" || check_fail "$HOME/.config/herdr/config.toml is missing"
       if windows_has_wsl_distribution; then
@@ -1370,6 +1410,16 @@ EOF
     done
     if ((broken == 0)); then check_ok "no broken managed links"; else check_fail "$broken broken managed link(s)"; fi
     if ((unmanaged == 0)); then check_ok "all selected files are managed by Stow"; else check_fail "$unmanaged file(s) are not stowed"; fi
+    local name unlinked=()
+    while IFS= read -r name; do
+      [[ "$(readlink "$CLAUDE_SKILLS_DIR/$name" 2>/dev/null)" == "../../.agents/skills/$name" && -e "$CLAUDE_SKILLS_DIR/$name" ]] \
+        || unlinked+=("$name")
+    done < <(agent_skill_names)
+    if ((${#unlinked[@]} == 0)); then
+      check_ok "agent skills are linked for Claude Code"
+    else
+      check_fail "agent skills missing from $CLAUDE_SKILLS_DIR: ${unlinked[*]} (run: dotctl stow)"
+    fi
   fi
 
   check_cmd mise

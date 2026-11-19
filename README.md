@@ -282,6 +282,11 @@ The work-only agent skills in `stow/agents-work` (e.g. `ad-query`) are linked
 on every machine as well; they fail cleanly where the company network is not
 reachable.
 
+Claude Code only reads skills from `~/.claude/skills`, a directory it also
+writes to itself. `dotctl stow` therefore links each shared skill there
+individually (`~/.claude/skills/<name>` → `~/.agents/skills/<name>`) and removes
+links to skills that were deleted; native Windows gets copies instead.
+
 Azure DevOps over HTTPS is not configured. In the rare case it is still needed
 from WSL, use Windows Git, which ships Git Credential Manager and signs in with
 the company SSO in the browser:
