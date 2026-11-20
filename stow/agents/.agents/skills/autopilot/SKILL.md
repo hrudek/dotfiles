@@ -109,7 +109,7 @@ Add to `PLAN.md` an ordered unit list. Each unit = one narrow, independently lan
 `<n>. <title> | acceptance: <checks + behavior to show> | depends on: <unit or -> | parallel: yes/no`
 
 - Riskiest unknown first. Verification harness and baseline (pre-change measurements) before features.
-- Parallelize only across seams (different files/areas), each owner in its own worktree, max 2 owners at once. Fewest possible dependencies.
+- Parallelize only across seams (different files/areas), each owner in its own worktree. No cap on owners at once: run as many as there are independent units that pay off in parallel; go sequential when units touch the same area, build on each other, or overlap would cause rebase churn. Fewest possible dependencies.
 - One-way-door design decisions: have one owner sketch 2–3 options with tradeoffs in `units/design-<topic>.md`, pick one, log why. Mechanical work skips this.
 
 ## 3. Run the loop (per unit)
