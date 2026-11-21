@@ -36,7 +36,7 @@ Run the deslop pass from `../../deslop/references/rules.md` (relative to this fi
 
 ## 5. Babysit to green
 
-Order: conflicts, then review threads, then CI. Batch fixes into one push. Answer review threads (fix or reply with reason). A conflict on a stack you do not own: report, do not resolve. Wait under `timeout`, never `sleep`, only for the checks the rigor names: `fast` `gh pr checks <pr> --required --watch` (none required: nothing to wait for), `normal`/`high` `gh pr checks <pr> --watch`. Start manually triggered workflows only at `high`. Report every new head to the root. When verified, green and threads resolved, report **merge-ready**.
+Order: conflicts, then review threads, then CI. Batch fixes into one push. Answer review threads (fix or reply with reason). A conflict on a stack you do not own: report, do not resolve. Wait under `timeout`, never `sleep`, only for the checks the rigor names: `fast` `../scripts/wait-any.sh pr:<pr>:required` (none required: nothing to wait for), `normal`/`high` `../scripts/wait-any.sh pr:<pr>` (polls every 60 s; exit 124 after 20 min: report progress to the root, then wait again). Start manually triggered workflows only at `high`. Report every new head to the root. When verified, green and threads resolved, report **merge-ready**.
 
 ## 6. Fix rounds
 

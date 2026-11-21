@@ -18,11 +18,14 @@ Files next to this skill (pass absolute paths to agents, they read them, you do 
 
 ## 0. Task folder, pickup, stop
 
-- Task folder: `~/.cache/agent-tasks/<repo>/<task-slug>/`, never inside a repository. Holds `BRIEF.md` (request verbatim), `PLAN.md`, `decisions.tsv`, `agents.tsv`, `resume.md`, `units/<n>-<slug>.md`, `sessions/`, `report.md`.
+- Task folder: `~/.cache/agent-tasks/<repo>/<task-slug>/`, never inside a repository. Holds `BRIEF.md` (request verbatim), `PLAN.md`, `decisions.tsv`, `agents.tsv`, `resume.md`, `units/<n>-<slug>.md`, `sessions/`, `report.md`, `inbox.md` (work added mid-run).
+- **Started with a task folder** (`/skill:autopilot <task>`, e.g. by `../orchestrator/SKILL.md`): no `decisions.tsv` yet means a fresh run whose request is `BRIEF.md`; otherwise pickup.
+- **`resume.md` header**, first four lines, kept current from the start (the orchestrator reads them): `Status: running|paused|done`, `Tab: $HERDR_TAB_ID`, `Root pane: $HERDR_PANE_ID`, `Tag: <run tag>` (§Agents). Rewrite Tab and Root pane on every pickup; set `paused` on pause and `done` after §6.
 - **Sessions:** at start, `mkdir -p <task>/sessions && ln -sfn "$PI_SESSION_FILE" <task>/sessions/root.jsonl` (a later root on pickup: `root-2.jsonl`, …). Every agent you start writes its session there (see §Agents), so `/skill:recap` and `/skill:reflect <task>` can evaluate the whole run.
-- **Pickup:** if the folder has `resume.md` or `decisions.tsv`, read `resume.md`, the last 20 trail rows, `agents.tsv`, and the PR/branch state (`gh pr list --json`, `git log`). The trail is authoritative: name the resume point, do not redo finished work or re-run old repros, log a `start` row, continue. Verify inherited claims on the real artifact before building on them.
+- **Pickup:** if the folder has `decisions.tsv`, read `resume.md`, the last 20 trail rows, `agents.tsv`, and the PR/branch state (`gh pr list --json`, `git log`). The trail is authoritative: name the resume point, do not redo finished work or re-run old repros, log a `start` row, continue. Verify inherited claims on the real artifact before building on them.
 - **Pause on request** ("pause", "ich gehe offline", "restart"): never on "keep going". Finish or back out of the current atomic step, start nothing new, tell owners to stop, `wip:` commit uncommitted work on its branch (say in the body if the tree is broken), no new PR or push, update `resume.md`, reply where things stand and the first action on resume.
 - **Stop/hold from the operator:** every owner gets a zero-writes order, reports where it stands, keeps its brief until released.
+- **New work mid-run** (operator message or an `inbox.md` item): if it is a pause, stop or priority change, handle it as above. Otherwise append it verbatim with a timestamp to `BRIEF.md`, add its units to `PLAN.md` (dependencies on running units, same rules as §2), extend Done means (never relax it), log a `scope` row, reply in one line which units and in what order. §6 starts only when these units are done too. Answer from the next wake at the latest; never let it wait behind a long block.
 
 ## Run type
 
@@ -44,11 +47,11 @@ Light path:
 
 Two kinds, both always with `--model <id>` (§Models), `--session-dir <task>/sessions` and `--name <role>-<unit>` (names below), never `--no-session`:
 
-- **Long-lived, in a herdr pane** (`../herdr/SKILL.md`): owners only. They run for hours, take fix rounds in the same context, and need auto-resume, which works only in interactive pi. `herdr agent start owner-<n> --kind pi --pane <id> -- --model <id> --session-dir <task>/sessions --name owner-<n>`.
-  - **Worker tab:** all owner panes go in one tab per session, never in your own tab. Before the first owner, if `resume.md` names no worker tab or `herdr tab get <id>` fails, create it once: `herdr tab create --workspace "$HERDR_WORKSPACE_ID" --label autopilot-<task-slug> --no-focus`; record `.result.tab.tab_id` in `resume.md`, use `.result.root_pane.pane_id` for that owner. Later owners and replacements: `herdr pane split <pane in the worker tab> --direction right|down --no-focus` (direction per `herdr pane layout`), then `agent start` in the returned pane. Never create a second worker tab while the first is alive.
-- **One-shot, headless:** verifier, design sketch, final verify, attention review, scans. `timeout 1800 pi -p --model <id> --session-dir <task>/sessions --name <name> "<prompt>" > <task>/units/<name>.md 2>&1`; the file is its reply. Several at once: `( cmd1 & cmd2 & wait )`. Auto-resume does not run here: on a limit or other error (non-zero exit, empty or error reply), rerun once on the role's fallback model and log a `model` row; a second failure is a gap.
+- **Long-lived, in a herdr pane** (`../herdr/SKILL.md`): owners only. They run for hours, take fix rounds in the same context, and need auto-resume, which works only in interactive pi. `herdr agent start <tag>-owner-<n> --kind pi --pane <id> -- --model <id> --session-dir <task>/sessions --name owner-<n>`. herdr names are unique across every run on this machine, so prefix them with a run tag (`<tag>`: ≤ 12 chars of the task slug, `[a-z0-9]`, written to `resume.md`) and address owners by their pane ID from `agents.tsv`; another run's `owner-1` is not yours.
+  - **Panes in your own tab:** the run's tab (`$HERDR_TAB_ID`) holds you and your owners; never create tabs (the orchestrator does that, one per run). New owner: `herdr pane split <your pane or an owner pane> --direction right|down --cwd <its worktree> --no-focus` (direction per `herdr pane layout`: split the largest pane), then `agent start` in `.result.pane.pane_id`. At most 4 owner panes at once; further parallel units wait for a free slot. Close an owner's pane (`herdr pane close <id>`) once its unit landed or was dropped.
+- **One-shot, headless:** verifier, design sketch, final verify, attention review, scans. Start each with `scripts/launch.sh <task> <name> -- timeout 1800 pi -p --model <id> --session-dir <task>/sessions --name <name> "<prompt>"`; `units/<name>.md` is its reply, `.pid`/`.exit` record how it ended. Wait with `scripts/wait-any.sh job:<task>/units/<name>` (§4). Never `nohup … &` by hand or find a job later with `pgrep`/`pkill -f`: the pattern matches the waiting shell itself. Auto-resume does not run here: on a limit or other error (non-zero exit, empty or error reply), rerun once on the role's fallback model and log a `model` row; a second failure is a gap.
 
-Names: `owner-<n>` (replacement `owner-<n>-b`), `verifier-<n>-r<round>`, `design-<topic>`, `scan-<area>`, `final-verify`, `attention`. The part before the first `-` is the role in the usage table.
+Names (pi `--name`; herdr adds the run tag): `owner-<n>` (replacement `owner-<n>-b`), `verifier-<n>-r<round>`, `design-<topic>`, `scan-<area>`, `final-verify`, `attention`. The part before the first `-` is the role in the usage table.
 
 ## Models
 
@@ -80,7 +83,7 @@ Rigor only changes cloud CI: what is waited for and what is started. Local check
 |---|---|---|---|
 | PR checks to wait for before merge | required only | all that start automatically | all that start automatically |
 | Manually triggered workflows (`workflow_dispatch`, e.g. simulator or device runs) | never | never | yes, when they cover the touched paths |
-| Base CI after merge | checked on each wake, next unit goes on | wait (`gh run watch`) | wait |
+| Base CI after merge | checked on each wake, next unit goes on | wait (`wait-any.sh sha:<merge-sha>`) | wait |
 
 - A unit with a one-way door (data migration, stored data or format change, public API) runs at `high` whatever the run's level. Log a `rigor` row.
 - `fast` grants merge permission only when its source asks for quick merges; otherwise it only drops the waits.
@@ -89,7 +92,7 @@ Rigor only changes cloud CI: what is waited for and what is started. Local check
 
 ## 1. Frame (skip parts the user already gave)
 
-Ground first (read the repo's AGENTS.md/README, count the work), then write `PLAN.md`:
+Ground first (read the repo's AGENTS.md/README, count the work, and list other runs of this repo with `../orchestrator/scripts/runs.sh`: for each `running` one read its `PLAN.md` and open PRs; a unit touching the same files depends on their merge, log it as `assume`), then write `PLAN.md`:
 
 ```
 Goal: <one sentence>
@@ -114,19 +117,19 @@ Add to `PLAN.md` an ordered unit list. Each unit = one narrow, independently lan
 
 ## 3. Run the loop (per unit)
 
-1. **Spawn the owner.** Fresh `pi` on the owner model (§Models) in its own herdr pane in the worker tab as `owner-<n>` (§Agents), in a fresh worktree (`../worktrees/SKILL.md` for `.bare` repos) on the base from `references/merge-rules.md`. Prompt: path to `references/pr-owner.md`, the unit line, the unit's rigor, Done means, out of scope, permissions, base branch, task folder. Record it in `agents.tsv` (name, pane, unit, branch, started, stuck-after minutes from past units of its kind, default 90).
+1. **Spawn the owner.** Fresh `pi` on the owner model (§Models) in its own herdr pane in your tab as `owner-<n>` (§Agents), in a fresh worktree (`../worktrees/SKILL.md` for `.bare` repos) on the base from `references/merge-rules.md`. Prompt: path to `references/pr-owner.md`, the unit line, the unit's rigor, Done means, out of scope, permissions, base branch, task folder. Record it in `agents.tsv` (name, pane, unit, branch, started, stuck-after minutes from past units of its kind, default 90).
 2. **Code-ready.** The owner builds, proves the change on the real artifact, runs the deslop pass, opens the PR (ready, not draft), and reports the code-ready head SHA.
 3. **Verify.** Run a **fresh** headless verifier `verifier-<n>-r<round>` (§Agents) on the verifier model (§Models, other family than the owner) with `references/verifier.md`, unit, acceptance, rigor, PR, exact head SHA, base. Verdict: `PASS`, `PASS+NOTES` or `FAIL` with every provable issue. Drop a verdict that does not name the SHA and what it ran; respawn once, then record a gap. A gap is not a pass.
 4. **Fix rounds.** `FAIL`: send all issues to the owner, it fixes, redoes the deslop pass on changed lines, reports the new head. Re-verify per `references/merge-rules.md` (one fresh verifier; wording-only change: none). Max 3 rounds, then shrink or discard the unit and log why.
 5. **Land** per `references/merge-rules.md`: merge only with permission and only a verdict covering the head that lands; otherwise stop at verified.
-6. **Trail row** (see §5) and `resume.md` update after every unit outcome. Close finished panes.
+6. **Trail row** (see §5) and `resume.md` update after every unit outcome. Close finished panes; after a merge run `scripts/cleanup.sh <repo-root>` (removes only landed, clean worktrees and branches).
 
 Loop discipline: every unit is an experiment. State the hypothesis, make the smallest change the evidence justifies, verify on the real artifact, keep if it advanced, revert if not. Belt-and-suspenders that "might help" gets reverted. Verify by inspecting the artifact, never a self-report; when something passes too easily, suspect the check first. If a worker games a gate, reset and tighten the brief. If the gate itself is wrong, fix it in its own PR.
 
 ## 4. Root duties while it runs
 
-- **Wake on events, not timers.** Prompt owners with `herdr agent prompt <owner> "…" --wait --timeout <ms>`, no `--until` (the defaults include `done`; a hand-written list missed it and idled 85 min). Block on `gh pr checks --watch`, `gh run watch` only where §Rigor waits for CI, always under `timeout`. Never `sleep`-poll. Usage limits: per §Models.
-- **Audit roughly hourly or on every wake:** check each agent by side effects (new commits, pushes, trail rows, pane output via `herdr agent read --lines 40`), not by its status text. Stuck = errors, cannot start turns, or nothing new past its stuck-after time. Replace a stuck owner at once (new pane as `owner-<n>-b`, same brief, pointing at its branch and `units/` report). An agent waiting on a question is not stuck: answer it.
+- **Wake on events, not timers.** Send owners work with `herdr agent prompt <pane-id> "…"` (no `--wait`), then block on everything pending in one call: `scripts/wait-any.sh herdr:<pane-id> job:<task>/units/<name> run:<id> pr:<n>[:required]`; right after a push or merge, before a run id exists, `sha:<sha>` (never `sleep` until a run shows up). It returns on the first end, caps at 20 min (exit 124), and kills the other waiters. Handle what ended at once, then call it again with what is still pending. Exit 124: audit (below), then wait again. Before each call, post one line: what you wait on. Never hand-roll waits (`wait` joining all, `herdr agent wait --until`, `tail --pid`, `; echo settled`, `>/dev/null` on the waiter): each variant hid an end for up to 64 min. A run or PR is watched by one agent only: owners their PR checks, the root base CI. Never `sleep`-poll. Usage limits: per §Models.
+- **Audit on every wake and every capped wait:** check each agent by side effects (new commits, pushes, trail rows, pane output via `herdr agent read --lines 40`), not by its status text. Stuck = errors, cannot start turns, or nothing new past its stuck-after time. Replace a stuck owner at once (new pane as `owner-<n>-b`, same brief, pointing at its branch and `units/` report). An agent waiting on a question is not stuck: answer it.
 - **Fix drift:** unreported heads, unrecorded agents, missing trail rows: have the owner record them.
 - **Countersign gate loosening:** anything that weakens a check (raised budget, allowlist entry, skipped/soft-failed test, disabled lint) needs verifier proof and your explicit countersign row in the trail. A disabled or soft-failed check always comes back out. Never bypass branch protection or forge-enforced approvals.
 - **Mid-run discoveries are yours:** broken tooling, flaky checks, related bugs, review noise go into their own small unit/PR. Then return to the predicate.
@@ -145,7 +148,7 @@ Loop discipline: every unit is an experiment. State the hypothesis, make the sma
 ## 6. Verify the whole and hand back
 
 1. One fresh headless verifier `final-verify` (§Agents) runs the full Done means predicate on the real product: on the base branch if units merged, else on a local never-pushed integration branch merging all stack tips. Failures become new units.
-2. **Trail audit:** check this run's rows: each maps to a real action, each evidence pointer resolves (`git cat-file -e`, `gh pr view`). Add superseding rows for wrong ones and rows for unlogged forks or pivots.
+2. **Cleanup and trail audit:** run `scripts/cleanup.sh <repo-root>`; list every `kept` line in `report.md`. Then check this run's rows: each maps to a real action, each evidence pointer resolves (`git cat-file -e`, `gh pr view`). Add superseding rows for wrong ones and rows for unlogged forks or pivots.
 3. **Attention review:** one fresh headless agent `attention` (§Agents) on a different model family than the root. It reads `PLAN.md`, `decisions.tsv`, `units/*.md` (bounded) and the PR list, not transcripts, and lists: decisions with weak or no evidence, verification claimed without proof, risky or scope-creeping choices, gaps a skim would miss. Its list goes into `report.md` under `## Attention`, headed `reviewed by <model>` ("No flags" is valid).
 4. Encode recurring corrections from this run as a check, lint rule or script in their own PR if cheap, otherwise list them in the report.
-5. `report.md`: first carry every factual correction from verifiers into it and the reply, not only the PR text. Then predicate state per check, PRs with verdict and state (merge order if unmerged), discarded work and why, checks actually run, cloud checks not awaited (§Rigor) and their later result, what still needs a human (`## Ready to test` at `fast`), Attention. Append `scripts/usage.sh <task>` output (its `## Usage` tables). Reply in ≤10 lines and point to `/skill:recap` (catch-up) and `/skill:reflect <task>` (improve the skills from this run).
+5. `report.md`: first carry every factual correction from verifiers into it and the reply, not only the PR text. Then predicate state per check, PRs with verdict and state (merge order if unmerged), discarded work and why, checks actually run, cloud checks not awaited (§Rigor) and their later result, what still needs a human (`## Ready to test` at `fast`), Attention. Append `scripts/usage.sh <task>` output (its `## Usage` tables). Set `Status: done` in `resume.md`. Reply in ≤10 lines and point to `/skill:recap` (catch-up) and `/skill:reflect <task>` (improve the skills from this run).

@@ -29,7 +29,7 @@ With merge permission never stack: units run in parallel off base and each lands
    - Base changed a caller of the patch or something it depends on (called code, dependency version): run the patch's checks on the merge result; merge on pass.
    - Otherwise merge without rebasing. If the base would force a third rebase, hold and report to the root.
 3. `gh pr merge <pr> --squash`, then read it back: `gh pr view <pr> --json state,mergedAt,baseRefName` must show merged into the base. Use `--auto` only when the verdict covers the current head.
-4. After merging, check base CI: `normal`/`high` wait with `gh run watch` under `timeout`; `fast` does not block, the root checks it on each wake. Red: the fix is the next unit, highest priority (`fast`: revert rule in `../SKILL.md` §Rigor).
+4. After merging, check base CI: `normal`/`high` wait with `../scripts/wait-any.sh sha:<merge-sha>` (with any other pending targets); `fast` does not block, the root checks it on each wake. Red: the fix is the next unit, highest priority (`fast`: revert rule in `../SKILL.md` §Rigor).
 
 ## Stacks (no merge permission, or landing a stack later)
 
