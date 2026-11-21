@@ -1,26 +1,53 @@
 ---
 name: reflect
-description: Spawn three parallel review subagents over the active pi session or a whole autopilot run, surface durable learnings, and route each to a concrete edit on an existing skill. Nothing is applied without the user's approval. Use for /skill:reflect or when the user says reflect.
+description: Spawn three parallel review subagents over the active pi session, a set of recent sessions, or a whole autopilot run, surface durable learnings and recurring patterns, and route each to a concrete edit on an existing skill. Nothing is applied without the user's approval. Use for /skill:reflect, when the user says reflect, or asks to review or evaluate their last sessions.
 disable-model-invocation: true
 ---
 
 # Reflect
 
-Mine the current conversation for durable learnings, then route them into skill edits. Port of pstack `reflect` for pi (see `../PSTACK.md`).
+Mine sessions for durable learnings, then route them into skill edits. Port of pstack `reflect` for pi (see `../PSTACK.md`).
 
-Skip when the conversation is trivial, off-topic, or already covered by an existing skill the parent followed correctly. One-offs are not learnings.
+Skip when the material is trivial, off-topic, or already covered by an existing skill the parent followed correctly. One-offs are not learnings.
 
-## 1. Locate the active transcript
+## 1. Pick the scope and build the digest
 
-Use this conversation's session file: `$PI_SESSION_FILE`. Never glob across `~/.pi/agent/sessions/*/`; that reads private chats from unrelated projects. If the user names another session (e.g. an autopilot owner's), use only that file.
+Pick the mode from the request; ask only if it is genuinely ambiguous:
 
-Work folder: `~/.cache/agent-tasks/reflect/<session-id>/` (outside every repo). Write a digest there, so reviewers do not each pay for full tool output:
+| Request | Mode | Sessions |
+|---|---|---|
+| plain `reflect`, "this session" | Current | `$PI_SESSION_FILE` |
+| names a session file or id | Named | that file only |
+| "my last sessions", "last N", "this week", "in project X", "all projects" | Multi | `scripts/sessions.sh` |
+| task folder with `sessions/` | Run | see below |
+
+Scripts are relative to this skill's folder. Each digest keeps user and assistant text, shortens thinking, tool calls and tool results, starts with a `# Session <name>` heading and tags entries with their ids. Writing it once saves every reviewer the full tool output.
+
+**Current / Named:** work folder `~/.cache/agent-tasks/reflect/<session-id>/` (outside every repo).
 
 ```bash
-scripts/digest.sh "$PI_SESSION_FILE" > <work>/digest.md   # relative to this skill's folder
+scripts/digest.sh "$PI_SESSION_FILE" > <work>/digest.md
 ```
 
-The digest keeps user and assistant text, shortens thinking, tool calls and results, and tags each entry with its id.
+**Multi:** work folder `~/.cache/agent-tasks/reflect/multi-<YYYYMMDD-HHMM>/`. Select sessions first:
+
+```bash
+scripts/sessions.sh [-n 10] [--since 2026-11-01] [--cwd <dir> | --match <substr> | --all] > <work>/sessions.tsv
+```
+
+Defaults: sessions active since the watermark (`~/.cache/agent-tasks/reflect/reviewed-until`, set in step 6) in the current cwd or below it, newest 10, at least 2 user messages, current session excluded (`--include-current` adds it). Map the request to flags: a count to `-n`, a period to `--since`, a project name to `--match`; `--all-time` only when the user asks to re-review old work. Go across projects (`--all`, or a `--match` outside the cwd) only when the user asks for it; other projects can hold private chats. Show the picked list (start, cwd, title) in one short block, then continue without waiting. Build one digest, sessions oldest first:
+
+```bash
+since=$(cat ~/.cache/agent-tasks/reflect/reviewed-until 2>/dev/null)  # or the --since you passed
+cut -f1 <work>/sessions.tsv | tac | while read -r f; do echo; scripts/digest.sh "$f" 200 "$since"; done > <work>/digest.md
+python3 -I scripts/waits.py --since "$since" $(cut -f1 <work>/sessions.tsv | tac) > <work>/waits.md
+```
+
+`waits.md` lists tool calls that blocked ≥ 90 s (own runtime vs. held by parallel siblings) and user messages with the time since the last assistant step. Append to every reviewer prompt: `Timing per tool call and user message: <work>/waits.md; flag waits that outlived what they waited on.`
+
+`<SESSION_PATH>` is the space-separated list of those files. Over ~400 KB: rebuild with tool results at 100 chars; still over ~600 KB: drop the oldest sessions and say so.
+
+If the user only wants an evaluation ("Auswertung", "summary", "what went wrong lately") and no skill changes, run steps 2–3, report the synthesizer's Overview plus its findings, and stop; skip steps 4–5 unless the user asks.
 
 **Run mode** (`/skill:reflect <task-folder>` with a `sessions/` folder): review the run instead of this chat. Work folder `<task>/reflect/`; `<SESSION_PATH>` is `<task>/sessions/*.jsonl`; `<TASK_FOLDER>` is the task folder. Build one digest, usage first, then each session under its own heading:
 
@@ -52,7 +79,7 @@ The other family for two lenses gives real divergence and spreads usage limits. 
 
 ## 3. Synthesize
 
-Fill `references/synthesizer.md` with each reviewer's full output where marked, write it to `<work>/synth.prompt.md`, run one `pi -p --no-session --model pi-claude-cli/claude-opus-5-5:medium --tools read,bash` the same way into `<work>/synth.out.md`. It returns an Accepted / Rejected / Backlog list.
+Fill `references/synthesizer.md` with each reviewer's full output where marked and set `<MODE>` to `single session`, `multi-session (<N> sessions)` or `autopilot run`, write it to `<work>/synth.prompt.md`, run one `pi -p --no-session --model pi-claude-cli/claude-opus-5-5:medium --tools read,bash` the same way into `<work>/synth.out.md`. It returns an Accepted / Rejected / Backlog list, preceded by an Overview in multi-session mode.
 
 ## 4. Structural enforcement check
 
@@ -60,7 +87,7 @@ Move any Accepted item that a lint rule, script, metadata flag, or runtime check
 
 ## 5. Apply
 
-Present the synthesizer's full Accepted / Rejected / Backlog output and wait for explicit approval before applying any Accepted edit. The user picks the subset and may redirect routings. Skill changes affect every future agent. Do not auto-apply.
+Present the synthesizer's full output (Overview first, if any) and wait for explicit approval before applying any Accepted edit. The user picks the subset and may redirect routings. Skill changes affect every future agent. Do not auto-apply.
 
 Append each Backlog item to `~/.cache/agent-tasks/reflect/backlog.md` (date, pattern, what was hit, suggested mechanism) without waiting. Only the Accepted list waits for approval.
 
@@ -77,9 +104,15 @@ Validate every touched skill: frontmatter parses, `name` matches its folder, des
 
 ## 6. Summarize for the user
 
-Short list, no preamble:
+Short list, no preamble (multi-session: Overview first):
 
 - Edits applied: `<skill path>`. What changed, one line each.
 - New skills created: `<skill path>`. One line each (rare).
 - Backlog filed: `<title>`. One line each.
 - Dropped: one line per rejected finding + reason from the synthesizer.
+
+Multi mode, after the user has decided on the Accepted list (applied or not): move the watermark, so the next multi run reviews only newer activity and old findings do not come back; a pattern that recurs after it is new evidence.
+
+```bash
+date -u +%Y-%m-%dT%H:%M:%SZ > ~/.cache/agent-tasks/reflect/reviewed-until
+```
